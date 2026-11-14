@@ -289,21 +289,24 @@ export function Library({ onOpen, onInstall }: Props) {
                 <Flame size={14} />
                 {reading ? `${reading.streak} дн. · сьогодні ${reading.today ? durationLabel(reading.today) : '0 хв'}` : 'Статистика'}
               </button>
-              <div className="shelf-chips" role="tablist" aria-label="Полиці">
-                <button role="tab" aria-selected={onShelf === null} className={cx('chip', onShelf === null && 'active')} onClick={() => setShelf(null)}>
-                  Усі · {books?.length ?? 0}
-                </button>
-                {shelves.list.map(([name, count]) => (
-                  <button key={name} role="tab" aria-selected={onShelf === name} className={cx('chip', onShelf === name && 'active')} onClick={() => setShelf(name)}>
-                    {name} · {count}
+              {/* Without any shelves there is nothing to choose between ("Усі" alone would take a row on a phone). */}
+              {(shelves.list.length > 0 || onShelf !== null) && (
+                <div className="shelf-chips" role="tablist" aria-label="Полиці">
+                  <button role="tab" aria-selected={onShelf === null} className={cx('chip', onShelf === null && 'active')} onClick={() => setShelf(null)}>
+                    Усі · {books?.length ?? 0}
                   </button>
-                ))}
-                {shelves.list.length > 0 && shelves.loose > 0 && (
-                  <button role="tab" aria-selected={onShelf === NO_SHELF} className={cx('chip', onShelf === NO_SHELF && 'active')} onClick={() => setShelf(NO_SHELF)}>
-                    Без полиці · {shelves.loose}
-                  </button>
-                )}
-              </div>
+                  {shelves.list.map(([name, count]) => (
+                    <button key={name} role="tab" aria-selected={onShelf === name} className={cx('chip', onShelf === name && 'active')} onClick={() => setShelf(name)}>
+                      {name} · {count}
+                    </button>
+                  ))}
+                  {shelves.list.length > 0 && shelves.loose > 0 && (
+                    <button role="tab" aria-selected={onShelf === NO_SHELF} className={cx('chip', onShelf === NO_SHELF && 'active')} onClick={() => setShelf(NO_SHELF)}>
+                      Без полиці · {shelves.loose}
+                    </button>
+                  )}
+                </div>
+              )}
               <select className="library-sort" value={settings.librarySort} onChange={(e) => updateSettings({ librarySort: e.target.value as LibrarySort })} aria-label="Сортування" title="Сортування">
                 {SORTS.map(([value, name]) => (
                   <option key={value} value={value}>

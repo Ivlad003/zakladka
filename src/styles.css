@@ -3734,14 +3734,37 @@ img {
 }
 
 .library-sort {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 46vw;
+  margin-left: auto;
   padding: 5px 8px;
   font-size: 13px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: inherit;
+}
+
+/* A phone has no room for statistics, shelves and sorting in one row (the sorting list there is in
+   16px type, and Safari makes it as wide as its longest choice): the shelves get a row of their own. */
+@media (max-width: 640px) {
+  .library-tools {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .shelf-chips {
+    order: 3;
+    flex: 1 1 100%;
+  }
+
+  /* Takes the rest of the first row (up to half of it) rather than a width of its own, so it never
+     drops to a row of its own next to a long statistics label. */
+  .library-sort {
+    flex: 1 1 0;
+    max-width: 50%;
+  }
 }
 
 .book-edit {
