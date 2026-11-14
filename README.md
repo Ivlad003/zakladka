@@ -8,7 +8,7 @@ PWA-читалка для **EPUB, PDF, DjVu, FB2 і MOBI** з AI-агентам�
   <img src="site/media/phone-library.png" width="24%" alt="Бібліотека">
   <img src="site/media/phone-reading.png" width="24%" alt="Читання">
   <img src="site/media/phone-xray.png" width="24%" alt="X-Ray">
-  <img src="site/media/phone-ai.png" width="24%" alt="AI-пояснювач">
+  <img src="site/media/phone-ai.png" width="24%" alt="AI-агенти">
 </p>
 <p>
   <img src="site/media/phone-dictionary.png" width="24%" alt="Словник">
@@ -19,7 +19,7 @@ PWA-читалка для **EPUB, PDF, DjVu, FB2 і MOBI** з AI-агентам�
 
 ![Читалка на комп'ютері: дві сторінки поруч і панель X-Ray](site/media/desktop-reader.png)
 
-Відео (≈1 хв, телефон): [site/media/demo.mp4](site/media/demo.mp4) — або на [сторінці проєкту](https://ivlad003.github.io/zakladka/). Книжки на знімках — демонстраційні, написані для них; AI на знімку — локальна модель Qwen3 30B через Ollama.
+Відео (≈1 хв, телефон): [site/media/demo.mp4](site/media/demo.mp4) — або на [сторінці проєкту](https://ivlad003.github.io/zakladka/). Книжки на знімках — демонстраційні, написані для них.
 
 Онлайн-версія на GitHub Pages працює повністю в браузері: книги, нотатки й ключі лишаються на вашому пристрої. Збереження статей, вебпошук через сервер і проксі до локальних моделей потребують власного сервера (`npm run serve`, див. нижче).
 
