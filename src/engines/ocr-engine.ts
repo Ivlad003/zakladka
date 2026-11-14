@@ -108,8 +108,21 @@ export class OcrLayeredEngine implements FixedEngine {
     return ocr?.words.length ? layoutFromZones(ocr.words.map((w) => ({ text: w.text, x: w.x, y: w.y, w: w.w, h: w.h })), this.pageSizes[unit]) : null;
   }
 
-  getToc(): Promise<TocItem[]> {
-    return this.inner.getToc();
+  /** Contents made from the text, given out when the file has none of its own. */
+  private madeToc: TocItem[] = [];
+
+  setMadeToc(items: TocItem[]): void {
+    this.madeToc = items;
+  }
+
+  /** Whether the file itself has a table of contents. */
+  async hasOwnToc(): Promise<boolean> {
+    return (await this.inner.getToc().catch(() => [])).length > 0;
+  }
+
+  async getToc(): Promise<TocItem[]> {
+    const own = await this.inner.getToc().catch(() => []);
+    return own.length ? own : this.madeToc;
   }
 
   makeCover(): Promise<Blob | null> {

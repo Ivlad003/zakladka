@@ -15,6 +15,7 @@ import { db } from '../db';
 import { guessLang } from '../lib/read-aloud';
 import type { TocItem } from '../types';
 import { buildEpub, escapeXml, type EpubToc } from './epub-build';
+import { bodySizeOf, isPageNumber, median, runningHeads } from './page-text';
 import type { FixedEngine, PageLayout, PageLine } from './types';
 
 /** Bumped whenever the way text is laid out changes, so that stored copies are made again. */
@@ -37,21 +38,6 @@ function join(text: string, next: string): string {
   if (!text) return next;
   if (/[\p{L}][-­]$/u.test(text) && WORD_START.test(next)) return text.slice(0, -1) + next;
   return `${text} ${next}`;
-}
-
-const median = (values: number[]): number => {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
-};
-
-/** Running heads and page numbers: short lines that repeat at the same edge of many pages. */
-const normalizeEdge = (text: string) => text.toLocaleLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
-const isPageNumber = (text: string) => /^([-–—\s]*\d{1,4}[-–—\s]*|(стор|с|page|p)\.?\s*\d{1,4}|[ivxlcdm]{1,6})$/i.test(text.trim());
-
-function edgeLines(layout: PageLayout): PageLine[] {
-  const band = layout.height * 0.08;
-  return layout.lines.filter((l) => l.text.length < 120 && (l.y < band + l.size || l.y > layout.height - band));
 }
 
 /** Paragraphs and headings of a page whose lines carry positions. */
@@ -158,22 +144,9 @@ export async function buildReflow(source: ReflowSource, onProgress: (p: ReflowPr
     }
   }
 
-  // The body text size of the book: the size most of its characters are set in.
-  const weighted = new Map<number, number>();
-  for (const page of pages) {
-    if (page.kind !== 'layout') continue;
-    for (const l of page.layout.lines) weighted.set(Math.round(l.size * 2) / 2, (weighted.get(Math.round(l.size * 2) / 2) ?? 0) + l.text.length);
-  }
-  const bodySize = [...weighted].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 10;
-
-  // Running heads: an edge line that recurs on a good share of the pages.
-  const counts = new Map<string, number>();
-  for (const page of pages) {
-    if (page.kind !== 'layout') continue;
-    for (const key of new Set(edgeLines(page.layout).map((l) => normalizeEdge(l.text)))) counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const textPages = pages.filter((p) => p.kind === 'layout').length;
-  const repeated = (key: string) => textPages >= 4 && (counts.get(key) ?? 0) >= Math.max(3, textPages * 0.3);
+  const layouts = pages.flatMap((p) => (p.kind === 'layout' ? [p.layout] : []));
+  const bodySize = bodySizeOf(layouts);
+  const isRunningHead = runningHeads(layouts);
 
   const files: { name: string; title: string; body: string }[] = [];
   const images: { file: string; type: string; data: Uint8Array }[] = [];
@@ -182,7 +155,7 @@ export async function buildReflow(source: ReflowSource, onProgress: (p: ReflowPr
   let sample = '';
   const blocksOf: Block[][] = pages.map((page) => {
     if (page.kind === 'text') return blocksFromText(page.text);
-    const skip = new Set(edgeLines(page.layout).filter((l) => isPageNumber(l.text) || repeated(normalizeEdge(l.text))));
+    const skip = new Set(page.layout.lines.filter((l) => isRunningHead(l, page.layout)));
     return blocksFromLayout(page.layout, bodySize, skip);
   });
   // A page with (next to) no text is shown as a picture; a book of mostly such pages is a scan.

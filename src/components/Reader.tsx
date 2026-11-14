@@ -64,6 +64,7 @@ import { ViewSettings } from './Settings';
 import { importBooks } from '../lib/library';
 import type { EpubEngineLike } from '../engines/types';
 import type { ReflowProgress } from '../engines/reflow';
+import type { MadeTocState } from './SidePanel';
 import { SidePanel, type SearchState, type SemanticState, type SideTab } from './SidePanel';
 
 // The AI panel pulls in the Claude SDK and the Markdown renderer; load them only when it is opened.
@@ -111,6 +112,9 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   const [reflowKey, setReflowKey] = useState(0);
   const [reflowProgress, setReflowProgress] = useState<ReflowProgress | null>(null);
   const [readerNotice, setReaderNotice] = useState<string | null>(null);
+  // A table of contents made from the text, for a PDF/DjVu book without one.
+  const [madeToc, setMadeToc] = useState<Omit<MadeTocState, 'onBuild'> | null>(null);
+  const madeTocAbortRef = useRef<AbortController | null>(null);
   const [locationsReady, setLocationsReady] = useState(false);
   const [scale, setScale] = useState(1);
 
@@ -194,6 +198,15 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
         layered.load(await db.ocr.where('bookId').equals(bookId).toArray());
         opened = layered;
         setOcrEngine(layered);
+        if (!(await layered.hasOwnToc())) {
+          const { storedAutoToc } = await import('../lib/auto-toc');
+          const kept = await storedAutoToc(bookId, layered.ocrCount);
+          if (!alive) return;
+          if (kept) layered.setMadeToc(kept.items);
+          setMadeToc(kept ? { status: kept.items.length ? 'ready' : 'empty', source: kept.source } : { status: 'idle' });
+        } else {
+          setMadeToc(null);
+        }
       }
       // The text mode: the pages laid out again as an EPUB (made once, then kept).
       let reflowOn = false;
@@ -249,6 +262,8 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     return () => {
       alive = false;
       building.abort();
+      madeTocAbortRef.current?.abort();
+      madeTocAbortRef.current = null;
       opened?.destroy();
       searchAbortRef.current?.abort();
       ocrAbortRef.current?.abort();
@@ -684,6 +699,45 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
 
+  // ---- Contents made from the text ----
+  const madeTocRef = useRef(madeToc);
+  madeTocRef.current = madeToc;
+  /** Reads the book's text and makes a table of contents from it; in the background unless asked for. */
+  const makeToc = useCallback(
+    async (force = false) => {
+      const layered = ocrEngine;
+      if (!layered || madeTocAbortRef.current) return;
+      const controller = new AbortController();
+      madeTocAbortRef.current = controller;
+      setMadeToc({ status: 'building', progress: { done: 0, total: layered.unitCount } });
+      try {
+        const { buildAutoToc, saveAutoToc } = await import('../lib/auto-toc');
+        const ocrPages = layered.ocrCount;
+        const made = await buildAutoToc(layered, (progress) => setMadeToc({ status: 'building', progress }), controller.signal);
+        if (controller.signal.aborted) return;
+        await saveAutoToc(bookId, made, ocrPages);
+        layered.setMadeToc(made.items);
+        setToc(await layered.getToc());
+        // A book without text at all gives nothing, and says why.
+        const anyText = made.items.length || (await layered.getUnitText(0).catch(() => '')).trim() || (await layered.getUnitText(Math.min(layered.unitCount - 1, 5)).catch(() => '')).trim();
+        setMadeToc({ status: made.items.length ? 'ready' : anyText ? 'empty' : 'no-text', source: made.source });
+        if (force && made.items.length) setReaderNotice(made.source === 'contents' ? 'Зміст узято зі сторінки змісту книги.' : `Зміст складено за заголовками: ${made.items.length} розділ(и) верхнього рівня.`);
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) setMadeToc({ status: 'idle' });
+      } finally {
+        if (madeTocAbortRef.current === controller) madeTocAbortRef.current = null;
+      }
+    },
+    [ocrEngine, bookId],
+  );
+
+  // A book without contents of its own gets them made once, in the background, a moment after it opens.
+  useEffect(() => {
+    if (!engine || !ocrEngine || madeToc?.status !== 'idle') return;
+    const timer = setTimeout(() => void makeToc(), 1500);
+    return () => clearTimeout(timer);
+  }, [engine, ocrEngine, madeToc?.status, makeToc]);
+
   // ---- OCR ----
   const startOcr = async (scope: 'page' | 'book') => {
     if (!ocrEngine || ocrAbortRef.current) return;
@@ -702,6 +756,8 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
         onProgress: (p) => setOcrJob((job) => ({ ...job, progress: { ...p } })),
       });
       setOcrJob((job) => ({ ...job, running: false }));
+      // More text: contents made from it may now be found, or found better.
+      if (scope === 'book' && madeTocRef.current) void makeToc(true);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       setOcrJob((job) => ({ ...job, running: false, error: controller.signal.aborted ? null : `Не вдалося розпізнати текст: ${reason}` }));
@@ -1041,6 +1097,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
             onTab={setSide}
             onClose={() => setSide(null)}
             toc={toc}
+            madeToc={madeToc && !reflow ? { ...madeToc, onBuild: () => void makeToc(true) } : undefined}
             currentUnit={unit}
             onTocPick={goToToc}
             search={search}

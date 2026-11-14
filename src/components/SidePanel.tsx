@@ -11,8 +11,17 @@ export type { SearchState, SemanticState } from './SearchTab';
 
 export type SideTab = 'toc' | 'search' | 'notes' | 'bookmarks';
 
+/** A table of contents made from the text, for a book without one. */
+export interface MadeTocState {
+  status: 'idle' | 'building' | 'ready' | 'empty' | 'no-text';
+  source?: 'contents' | 'headings';
+  progress?: { done: number; total: number };
+  onBuild(): void;
+}
+
 interface Props extends SearchTabProps {
   tab: SideTab;
+  madeToc?: MadeTocState;
   onTab(tab: SideTab): void;
   onClose(): void;
   toc: TocItem[];
@@ -72,15 +81,55 @@ function findCurrentPath(items: TocItem[], unit: number): TocItem[] {
   return best;
 }
 
-function TocTab({ toc, currentUnit, onTocPick }: Props) {
-  if (!toc.length) return <p className="panel-empty">У цій книзі немає змісту.</p>;
+function MadeTocNote({ state, empty }: { state: MadeTocState; empty: boolean }) {
+  if (state.status === 'building') {
+    const p = state.progress;
+    return (
+      <div className="made-toc">
+        <p className="panel-meta">Складаю зміст із тексту книги{p ? `: стор. ${p.done} з ${p.total}` : '…'}</p>
+        {p && (
+          <div className="search-progress">
+            <div className="bar" style={{ width: `${Math.round((p.done / Math.max(1, p.total)) * 100)}%` }} />
+          </div>
+        )}
+      </div>
+    );
+  }
+  const said =
+    state.status === 'ready'
+      ? state.source === 'contents'
+        ? 'Зміст узято зі сторінки змісту самої книги.'
+        : 'Зміст складено автоматично за заголовками в тексті — може бути неповним.'
+      : state.status === 'empty'
+        ? 'У книзі немає змісту, і заголовків у тексті знайти не вдалося.'
+        : state.status === 'no-text'
+          ? 'У книзі немає змісту, а сторінки — скан без тексту. Розпізнайте текст (OCR), і зміст складеться сам.'
+          : 'У цій книзі немає змісту.';
+  return (
+    <div className="made-toc">
+      <p className={empty ? 'panel-empty' : 'panel-meta'}>{said}</p>
+      {state.status !== 'no-text' && (
+        <button className="btn small" onClick={state.onBuild}>
+          {state.status === 'idle' ? 'Скласти зміст із тексту' : 'Скласти ще раз'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TocTab({ toc, currentUnit, onTocPick, madeToc }: Props) {
+  const made = madeToc && madeToc.status !== 'idle' ? madeToc : null;
+  if (!toc.length) return madeToc ? <MadeTocNote state={madeToc} empty /> : <p className="panel-empty">У цій книзі немає змісту.</p>;
   const path = findCurrentPath(toc, currentUnit);
   return (
+    <>
+    {made && <MadeTocNote state={made} empty={false} />}
     <ul className="toc">
       {toc.map((item, i) => (
         <TocNode key={i} item={item} depth={0} path={path} onPick={onTocPick} />
       ))}
     </ul>
+    </>
   );
 }
 

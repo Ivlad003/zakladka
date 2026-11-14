@@ -289,6 +289,18 @@ export interface ReviewLog {
   elapsedDays: number | null;
 }
 
+/** A table of contents made from the text of a book that has none (see lib/auto-toc.ts). */
+export interface AutoTocRecord {
+  bookId: string;
+  version: number;
+  /** How many OCR pages the book had: more recognised text means the contents are made again. */
+  ocrPages: number;
+  items: TocItem[];
+  /** From the book's printed contents page, or from its headings. */
+  source: 'contents' | 'headings';
+  builtAt: number;
+}
+
 /** The text-mode EPUB made from a PDF or DjVu book (see engines/reflow.ts). */
 export interface ReflowCopy {
   bookId: string;

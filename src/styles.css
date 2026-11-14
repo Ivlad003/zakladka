@@ -3703,3 +3703,23 @@ img {
     padding-right: 10px;
   }
 }
+
+
+/* ---------- Contents made from the text ---------- */
+.made-toc {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px 6px;
+}
+
+.made-toc .panel-empty,
+.made-toc .panel-meta {
+  margin: 0;
+  padding: 0;
+}
+
+.made-toc .search-progress {
+  width: 100%;
+}
