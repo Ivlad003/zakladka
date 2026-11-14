@@ -41,7 +41,10 @@ async function enDefinitions(title: string, lang: string): Promise<EnEntry> {
       const text = doc.body.textContent?.replace(/\s+/g, ' ').trim() ?? '';
       if (text.length < 2) continue;
       meanings.push(`${e.partOfSpeech ? `(${e.partOfSpeech.toLowerCase()}) ` : ''}${text}`);
-      targets.push(doc.querySelector('.form-of-definition-link')?.textContent?.trim() || null);
+      // The word itself, without the transliteration beside it ("лінза (línza)") or stress marks.
+      const link = doc.querySelector('.form-of-definition-link');
+      const word = (link?.querySelector('.mention, i, a')?.textContent ?? link?.textContent ?? '').replace(/\s*\(.*$/, '').normalize('NFD').replace(/́/g, '').normalize('NFC').trim();
+      targets.push(word || null);
     }
   }
   const formOf = targets.length && targets.every(Boolean) ? (targets[0] as string) : undefined;

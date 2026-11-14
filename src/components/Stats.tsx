@@ -60,7 +60,8 @@ function DaysChart({ days, goalMinutes }: { days: DayTotal[]; goalMinutes: numbe
           );
         })}
         {[0, 7, 14, 21, days.length - 1].map((i) => (
-          <text key={i} className="chart-tick" x={i * step + step / 2} y={H - 6} textAnchor="middle">
+          // The first and last labels hang inwards, so they are not cut off at the edges.
+          <text key={i} className="chart-tick" x={i === 0 ? 0 : i === days.length - 1 ? W : i * step + step / 2} y={H - 6} textAnchor={i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'}>
             {i === days.length - 1 ? 'сьогодні' : dateLabel(days[i].day)}
           </text>
         ))}
