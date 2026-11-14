@@ -3674,3 +3674,21 @@ img {
   flex: 1;
   min-width: 0;
 }
+
+/* On a phone the library's bar holds a logo and a row of buttons; the name gives way so that they all fit. */
+@media (max-width: 520px) {
+  .library-bar {
+    gap: 2px;
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+  }
+
+  .brand div {
+    display: none;
+  }
+
+  .library-bar .btn:not(.add-book) {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
