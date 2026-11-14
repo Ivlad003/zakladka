@@ -234,7 +234,9 @@ function useTextSelection(rootRef: React.RefObject<HTMLElement | null>, propsRef
     let pointerHeld = false;
     const onPointerDown = (e: PointerEvent) => {
       pointerHeld = true;
-      // While dragging, stretch the filler behind the text so the selection does not jump in empty areas.
+      // While dragging with a mouse, stretch the filler behind the text so the selection does not jump in
+      // empty areas. A finger selects by a long press, where a page-sized filler would be selected whole (iOS).
+      if (e.pointerType !== 'mouse') return;
       const layer = (e.target as Element | null)?.closest?.('.textLayer');
       layer?.querySelector('.endOfContent')?.classList.add('active');
     };
@@ -246,6 +248,7 @@ function useTextSelection(rootRef: React.RefObject<HTMLElement | null>, propsRef
     // A long press on a touch screen starts a selection and cancels the pointer instead of releasing it.
     const onPointerCancel = () => {
       pointerHeld = false;
+      root.querySelectorAll('.endOfContent.active').forEach((el) => el.classList.remove('active'));
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.shiftKey || e.key === 'Shift') check();

@@ -824,7 +824,17 @@ textarea {
   inset: 100% 0 0;
   z-index: -1;
   cursor: default;
+  /* Safari knows only the prefixed property; without it this page-sized filler gets selected there. */
+  -webkit-user-select: none;
   user-select: none;
+}
+
+/* On touch screens nothing but the text itself may take part in a selection. */
+@media (pointer: coarse) {
+  .textLayer .endOfContent,
+  .textLayer .endOfContent.active {
+    display: none;
+  }
 }
 
 .textLayer .endOfContent.active {
@@ -1136,6 +1146,7 @@ textarea {
   border-radius: 12px;
   background: var(--surface);
   box-shadow: var(--shadow);
+  -webkit-user-select: none;
   user-select: none;
 }
 
