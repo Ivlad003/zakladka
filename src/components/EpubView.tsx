@@ -15,6 +15,12 @@ export interface EpubPosition {
   percent: number;
   chapterPage: number;
   chapterPages: number;
+  /**
+   * The view was laid out again (opened, resized, restyled) and came back to the reading place: not
+   * a move of the reader's, so it is not saved. The page shown may start a little earlier than the
+   * place itself, and saving that would creep backwards with every change of screen size.
+   */
+  layout: boolean;
 }
 
 export interface EpubViewApi {
@@ -151,6 +157,37 @@ async function noteText(engine: EpubEngineLike, doc: Document, sectionHref: stri
   return text ? { text: text.length > 1500 ? `${text.slice(0, 1500)}…` : text, href: full } : null;
 }
 /**
+ * The same stretch of a page with both ends inside text nodes: the start at the first letter at or
+ * after it, the end after the last letter before it. Null when there is no text in between.
+ */
+function intoText(range: Range): Range | null {
+  const doc = range.startContainer.ownerDocument;
+  if (!doc?.body) return null;
+  const texts: Text[] = [];
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent?.trim()) texts.push(n as Text);
+  const start = range.cloneRange();
+  start.collapse(true);
+  const end = range.cloneRange();
+  end.collapse(false);
+  const out = doc.createRange();
+  if (range.startContainer.nodeType === Node.TEXT_NODE) out.setStart(range.startContainer, range.startOffset);
+  else {
+    // comparePoint: 0 at the start itself, 1 after it.
+    const first = texts.find((t) => start.comparePoint(t, 0) >= 0);
+    if (!first) return null;
+    out.setStart(first, 0);
+  }
+  if (range.endContainer.nodeType === Node.TEXT_NODE) out.setEnd(range.endContainer, range.endOffset);
+  else {
+    const last = [...texts].reverse().find((t) => end.comparePoint(t, t.length) <= 0);
+    if (!last) return null;
+    out.setEnd(last, last.length);
+  }
+  return out.collapsed ? null : out;
+}
+
+/**
  * Prefix that outweighs any selector a book is likely to use: an id inside :not() counts as an id.
  * The reader's choice of font must win even over a book's own `!important` rules on classes.
  */
@@ -193,6 +230,10 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
   const hostRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const currentCfiRef = useRef<string | null>(props.initialCfi);
+  /** The reading place: where the book was opened, or where the reader last moved to themselves. */
+  const anchorRef = useRef<string | null>(props.initialCfi);
+  /** Layouts in progress (open, resize, restyle); relocations while there are any are not the reader's moves. */
+  const layoutRef = useRef(0);
   const propsRef = useRef(props);
   propsRef.current = props;
   const appliedRef = useRef(new Map<string, string>());
@@ -205,15 +246,33 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
   /** When a finger tap was last acted on; the click a browser may send after it is then ignored. */
   const tapTakenRef = useRef(0);
 
-  const display = (target?: string, fallbackUnit?: number) => {
+  /**
+   * Shows a place. `layout`: the view is only being laid out again at the reading place (not a move
+   * of the reader's); relocations until a moment after it has settled are reported as layout.
+   */
+  const display = (target?: string, fallbackUnit?: number, layout = false) => {
     const rendition = renditionRef.current;
     if (!rendition) return;
-    rendition.display(target).catch(() => {
+    // The reader going somewhere ends any layout still settling: that move is theirs.
+    if (layout) layoutRef.current++;
+    else layoutRef.current = 0;
+    const done = () => {
+      if (layout) setTimeout(() => (layoutRef.current = Math.max(0, layoutRef.current - 1)), 400);
+    };
+    rendition.display(target).then(done, () => {
       // A stale or malformed target must not leave the view blank.
-      if (!target) return;
+      if (!target) return done();
       const section = fallbackUnit !== undefined ? engine.book.spine.get(fallbackUnit) : null;
-      void rendition.display(section?.href).catch(() => {});
+      void rendition
+        .display(section?.href)
+        .catch(() => {})
+        .finally(done);
     });
+  };
+  /** The view laid out again: back to the reading place, without counting it as a move. */
+  const returnToPlace = () => {
+    const place = anchorRef.current ?? currentCfiRef.current;
+    if (place) display(place, undefined, true);
   };
 
   const anchorForCfi = (cfi: string): Anchor | null => {
@@ -247,7 +306,10 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       // Safari delivers no events — no touches, taps or keys — from a frame that may not run scripts.
       // The book's own scripts stay switched off by the policy the engine puts into every chapter.
       allowScriptedContent: true,
-    });
+      // epub.js would lay out again on its own after a rotation and return to the start of the page
+      // instead of the reading place; the size watcher below does it properly.
+      resizeOnOrientationChange: false,
+    } as Parameters<typeof engine.book.renderTo>[1]);
     renditionRef.current = rendition;
     appliedRef.current = new Map();
     searchMarkRef.current = null;
@@ -289,6 +351,8 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
     const turn = async (dir: 1 | -1) => {
       const m = manager();
       if (!m || turning || disposed) return;
+      // A page turn is the reader's move, even right after the book has opened.
+      layoutRef.current = 0;
       const jump = () => (dir > 0 ? rendition.next() : rendition.prev());
       // Scrolled chapters, right-to-left books and reduced motion keep epub.js's own instant change.
       if (!paged() || m.settings.direction === 'rtl' || reducedMotion() || !m.layout.delta) {
@@ -517,6 +581,8 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       atStart = Boolean(loc.atStart);
       atEnd = Boolean(loc.atEnd);
       currentCfiRef.current = loc.start.cfi;
+      const layout = layoutRef.current > 0;
+      if (!layout) anchorRef.current = loc.start.cfi;
       const unit = loc.start.index;
       const exact = engine.percentageFromCfi(loc.start.cfi);
       const withinChapter = loc.start.displayed.total > 0 ? (loc.start.displayed.page - 1) / loc.start.displayed.total : 0;
@@ -528,11 +594,24 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
         percent,
         chapterPage: loc.start.displayed.page,
         chapterPages: loc.start.displayed.total,
+        layout,
       });
     });
 
-    rendition.on('selected', (cfiRange: string, contents: Contents) => {
+    rendition.on('selected', (selectedCfi: string, contents: Contents) => {
       try {
+        // A paragraph selected whole (a triple tap or click) has its ends on the paragraph element,
+        // not inside its text; epub.js then works out a wrong position, and only the first character
+        // came through. Such ends are moved into the text and the position worked out again.
+        let cfiRange = selectedCfi;
+        const live = contents.window.getSelection();
+        if (live && !live.isCollapsed && live.rangeCount) {
+          const own = live.getRangeAt(0);
+          if (own.startContainer.nodeType !== Node.TEXT_NODE || own.endContainer.nodeType !== Node.TEXT_NODE) {
+            const fixed = intoText(own);
+            if (fixed) cfiRange = (contents as unknown as { cfiFromRange(r: Range): string }).cfiFromRange(fixed);
+          }
+        }
         const range = contents.range(cfiRange);
         const frame = contents.document.defaultView?.frameElement;
         const text = range?.toString().trim();
@@ -552,7 +631,7 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       }
     });
 
-    display(currentCfiRef.current ?? undefined);
+    display(anchorRef.current ?? undefined, undefined, true);
 
     let resizeHeld = false;
     const resize = debounce(() => {
@@ -563,10 +642,19 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
         resizeHeld = true;
         return;
       }
+      // epub.js lays the chapter out for the new size and goes to the place given; by default that
+      // is the start of the page shown, which is earlier than the reading place on a smaller screen.
+      const place = anchorRef.current ?? currentCfiRef.current ?? undefined;
+      layoutRef.current++;
       try {
-        rendition.resize(host.clientWidth, host.clientHeight);
+        // (epub.js takes the place as a third argument; its type definitions leave it out.)
+        (rendition as unknown as { resize(w: number, h: number, cfi?: string): void }).resize(host.clientWidth, host.clientHeight, place);
+        // Queued after epub.js's own return to the place: until it is done, relocations are layout.
+        returnToPlace();
       } catch {
         // epub.js throws if resized before the first section is displayed.
+      } finally {
+        layoutRef.current = Math.max(0, layoutRef.current - 1);
       }
     }, 150);
     const observer = new ResizeObserver(resize);
@@ -620,8 +708,7 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
     };
     const timers = [
       setTimeout(() => {
-        const cfi = currentCfiRef.current;
-        if (cfi) display(cfi);
+        returnToPlace();
         redrawMarks();
       }, 120),
       setTimeout(redrawMarks, 500),
@@ -633,8 +720,13 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
 
   // ---- Two pages side by side ----
   useEffect(() => {
-    const rendition = renditionRef.current as unknown as { spread?(kind: string, min?: number): void } | null;
-    rendition?.spread?.(props.spread ? 'auto' : 'none', 760);
+    const rendition = renditionRef.current as unknown as { spread?(kind: string, min?: number): void; settings?: { spread?: string } } | null;
+    const kind = props.spread ? 'auto' : 'none';
+    if (!rendition?.spread || rendition.settings?.spread === kind) return;
+    rendition.spread(kind, 760);
+    // One page or two: the pages are cut differently, and the view returns to the reading place.
+    returnToPlace();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.spread]);
 
   // ---- Highlights and notes ----

@@ -356,9 +356,14 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   );
 
   useEffect(() => {
+    // A phone may close a hidden app without another word (iOS seldom sends pagehide to a home-screen
+    // app): the place is written as soon as the app is out of sight.
+    const onHidden = () => document.visibilityState === 'hidden' && flushPosition();
     window.addEventListener('pagehide', flushPosition);
+    document.addEventListener('visibilitychange', onHidden);
     return () => {
       window.removeEventListener('pagehide', flushPosition);
+      document.removeEventListener('visibilitychange', onHidden);
       flushPosition();
     };
   }, [flushPosition]);
@@ -378,12 +383,18 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     (pos: EpubPosition) => {
       setEpubPos(pos);
       setUnit(pos.unit);
+      const progress = reflowRef.current ? (unitCount > 1 ? pos.unit / (unitCount - 1) : 1) : pos.percent;
+      // Laid out again at the same place (opened, resized, restyled): nothing to save, no page read.
+      if (pos.layout) {
+        trackerRef.current?.at(progress);
+        return;
+      }
       setSelection(null);
       setAnnotationPopup(null);
       // In the text mode a section is a page, and the page number is what is kept.
-      if (reflowRef.current) savePosition(String(pos.unit), unitCount > 1 ? pos.unit / (unitCount - 1) : 1);
+      if (reflowRef.current) savePosition(String(pos.unit), progress);
       else savePosition(pos.cfi, pos.percent);
-      trackerRef.current?.moved(reflowRef.current ? (unitCount > 1 ? pos.unit / (unitCount - 1) : 1) : pos.percent);
+      trackerRef.current?.moved(progress);
     },
     [savePosition, unitCount],
   );

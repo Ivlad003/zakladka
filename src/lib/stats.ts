@@ -37,6 +37,8 @@ export const dayKey = (time: number): string => {
 export interface Tracker {
   /** A page turned or the position moved, with the book's progress (0..1) after it. */
   moved(progress: number): void;
+  /** Where the book is shown, without a page having been read (opened, laid out again). */
+  at(progress: number): void;
   /** Any sign of the reader being there: a touch, a key, a scroll. */
   activity(): void;
   /** Writes what was counted (when the book is closed or the app hidden). */
@@ -109,6 +111,9 @@ export function startTracking(bookId: string): Tracker {
       if (progress > lastProgress && progress - lastProgress < 0.2) gain += progress - lastProgress;
       lastProgress = progress;
       if (progress >= FINISHED_AT) void markFinished(bookId);
+    },
+    at(progress) {
+      lastProgress = progress;
     },
     activity() {
       lastActivity = Date.now();
