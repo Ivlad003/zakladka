@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Check, History, KeyRound, LoaderCircle, MessageSquarePlus, Send, Settings, Square, Trash2, TriangleAlert, X } from 'lucide-react';
 import { agentsFor, buildSystemPrompt, getAgent } from '../ai/agents';
-import { LIBRARY_CHAT } from '../lib/chats';
+import { LIBRARY_CHAT, threadTitle } from '../lib/chats';
 import { resolveProvider } from '../ai/providers';
 import { describeError, plainHistory, runAgentTurn } from '../ai/run';
 import type { AgentContext } from '../ai/tools';
@@ -291,9 +292,11 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
             </small>
           </div>
         </div>
-        <button className={cx('icon-btn', historyOpen && 'active')} onClick={() => setHistoryOpen((o) => !o)} title="Історія розмов і пошук у них" aria-label="Історія розмов">
+        <button className={cx('btn small history-btn', historyOpen && 'active')} onClick={() => setHistoryOpen((o) => !o)} title="Історія розмов і пошук у них" aria-label="Історія розмов">
           <History size={16} />
+          <span>Історія</span>
         </button>
+        {(ui.length > 0 || historyOpen) && (
         <button
           className="icon-btn"
           onClick={() => {
@@ -306,9 +309,12 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
         >
           <MessageSquarePlus size={16} />
         </button>
-        <button className="icon-btn" onClick={() => void deleteThread()} disabled={busy || !ui.length || historyOpen} title="Видалити цю розмову" aria-label="Видалити цю розмову">
+        )}
+        {ui.length > 0 && !historyOpen && (
+        <button className="icon-btn" onClick={() => void deleteThread()} disabled={busy} title="Видалити цю розмову" aria-label="Видалити цю розмову">
           <Trash2 size={16} />
         </button>
+        )}
         <button className="icon-btn" onClick={onOpenSettings} title="Налаштування AI: провайдер, модель, ключ">
           <Settings size={16} />
         </button>
@@ -379,6 +385,7 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
                 {s}
               </button>
             ))}
+            <RecentChats bookId={bookId} currentId={loaded?.id} onOpen={openSaved} onAll={() => setHistoryOpen(true)} />
           </div>
         )}
 
@@ -504,6 +511,40 @@ function AssistantBubble({ message, thinking }: { message: AssistantMessage; thi
       {message.note && (
         <div className={cx('msg-note', (message.status === 'error' || message.status === 'refused') && 'error')}>{message.note}</div>
       )}
+    </div>
+  );
+}
+
+const shortDate = (time: number) => {
+  const d = new Date(time);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
+};
+
+/** The latest conversations about this book (or in the library), so that the history is in sight in an empty chat. */
+function RecentChats({ bookId, currentId, onOpen, onAll }: { bookId: string; currentId?: string; onOpen(thread: ChatThread): void; onAll(): void }) {
+  const threads = useLiveQuery(() => db.chats.where('bookId').equals(bookId).toArray(), [bookId]);
+  const recent = (threads ?? []).filter((t) => t.ui.length && t.id !== currentId).sort((a, b) => b.updatedAt - a.updatedAt);
+  if (!recent.length) return null;
+  return (
+    <div className="recent-chats">
+      <div className="recent-head">
+        <span>Попередні розмови</span>
+        <button className="link" onClick={onAll}>
+          Усі й пошук
+        </button>
+      </div>
+      {recent.slice(0, 4).map((t) => {
+        const a = getAgent(t.agentId);
+        return (
+          <button key={t.id} className="recent-chat" onClick={() => onOpen(t)}>
+            <a.icon size={14} />
+            <span className="recent-title">{threadTitle(t)}</span>
+            <span className="muted">{shortDate(t.updatedAt)}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

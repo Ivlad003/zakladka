@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pause, Play, Volume2, X } from 'lucide-react';
-import { aloudSupported, pauseAloud, resumeAloud, setAloudOptions, startAloud, stopAloud, useAloud, voicesFor, type AloudOptions, type AloudSource } from '../lib/read-aloud';
+import { aloudSupported, isIos, pauseAloud, prepareAloud, resumeAloud, setAloudOptions, startAloud, stopAloud, useAloud, voicesFor, type AloudOptions, type AloudSource } from '../lib/read-aloud';
 import { updateSettings, useSettings } from '../settings';
 
 const RATES = [0.8, 1, 1.2, 1.5, 1.8];
@@ -34,6 +34,14 @@ export function ReadAloudBar({ source, onClose }: Props) {
   }, []);
   // Leaving the book stops the voice.
   useEffect(() => () => stopAloud(), []);
+  // The page on screen is read ahead, so that a tap on ▶ can start speaking at once (iOS needs that).
+  useEffect(() => {
+    if (!aloudSupported()) return;
+    const ahead = () => void prepareAloud(source, { lang: settings.aloudLang }).catch(() => {});
+    ahead();
+    const timer = setInterval(ahead, 1500);
+    return () => clearInterval(timer);
+  }, [source, settings.aloudLang]);
 
   const options: AloudOptions = { rate: settings.aloudRate, voices: settings.aloudVoices, lang: settings.aloudLang };
   const change = (patch: Partial<Pick<AloudOptions, 'rate' | 'voices' | 'lang'>>) => {
@@ -109,6 +117,7 @@ export function ReadAloudBar({ source, onClose }: Props) {
         )}
       </div>
       {aloud.note && aloud.sentence && <small className="aloud-note">{aloud.note}</small>}
+      {aloud.status === 'idle' && !aloud.note && isIos() && <small className="aloud-note">На iPhone голос не чути в беззвучному режимі — перемикач збоку.</small>}
     </div>
   );
 }

@@ -59,6 +59,70 @@ let paused: { key: string; chunks: string[]; at: number } | null = null;
 // Chrome drops an utterance nobody holds on to before it has finished.
 let speaking: SpeechSynthesisUtterance | null = null;
 let wakeLock: { release(): Promise<void> } | null = null;
+/** Whether any utterance of this run has started; until one does, the voice may be blocked or muted. */
+let heard = false;
+/** The page on screen read ahead, so that a tap can start speaking at once (see startAloud). */
+let prepared: { key: string; chunks: string[]; carry: string; lang: string } | null = null;
+
+export const isIos = (): boolean => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+const SILENT_NOTE = isIos()
+  ? 'Не чути голосу? Вимкніть беззвучний режим (перемикач збоку iPhone) і додайте гучності. Якщо не допоможе — завантажте голос: Параметри → Універсальний доступ → Вміст мовлення → Голоси.'
+  : 'Пристрій не почав читати. Перевірте гучність і чи є в системі голос для цієї мови.';
+
+/** Half a second of silence as a WAV file, for waking the audio up inside a tap. */
+const SILENCE = (() => {
+  const samples = 4000;
+  const bytes = new Uint8Array(44 + samples * 2);
+  const view = new DataView(bytes.buffer);
+  const text = (at: number, s: string) => [...s].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  view.setUint32(4, 36 + samples * 2, true);
+  text(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true);
+  view.setUint32(28, 16000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, 'data');
+  view.setUint32(40, samples * 2, true);
+  let binary = '';
+  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  return `data:audio/wav;base64,${btoa(binary)}`;
+})();
+
+/**
+ * Inside the tap: asks for the playback audio session (Safari 16.4+: sound even with the silent
+ * switch on, where the system allows it) and plays a moment of silence, which wakes the audio on iOS.
+ */
+function wakeAudio(): void {
+  try {
+    const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+    if (session) session.type = 'playback';
+  } catch {
+    // Not every browser lets this be set.
+  }
+  try {
+    const audio = new Audio(SILENCE);
+    audio.setAttribute('playsinline', '');
+    void audio.play().catch(() => {});
+  } catch {
+    // Without it speech may still work.
+  }
+}
+
+/** Reads the page on screen ahead of a tap on ▶, so that the tap itself can start the voice. */
+export async function prepareAloud(from: AloudSource, opts: Pick<AloudOptions, 'lang'>): Promise<void> {
+  if (state.status !== 'idle') return;
+  const key = from.pageKey();
+  if (prepared?.key === key) return;
+  const text = tidy(await from.pageText());
+  if (state.status !== 'idle' || from.pageKey() !== key) return;
+  const { whole, rest } = cutAtSentence(text);
+  prepared = { key, chunks: toChunks(whole), carry: rest, lang: opts.lang || guessLang(text) };
+}
 
 // ---- Text ----
 /** Which language a text is in, as far as picking a voice needs to know. */
@@ -156,10 +220,20 @@ function say(text: string, token: number): Promise<void> {
       resolve();
     }
     utterance.onend = done;
-    utterance.onerror = done;
+    utterance.onerror = (e) => {
+      // "not-allowed": the page may not speak — on iOS, speech has to begin in a tap.
+      if ((e as SpeechSynthesisErrorEvent).error === 'not-allowed' && token === run) set({ note: SILENT_NOTE });
+      done();
+    };
+    utterance.onstart = () => {
+      heard = true;
+    };
     speaking = utterance;
-    if (token === run) speechSynthesis.speak(utterance);
-    else done();
+    if (token === run) {
+      speechSynthesis.speak(utterance);
+      // Nothing started after a while: the device is not speaking, and the reader should know why.
+      if (!heard) setTimeout(() => !heard && token === run && speaking === utterance && set({ note: SILENT_NOTE }), 4000);
+    } else done();
   });
 }
 
@@ -241,18 +315,28 @@ async function play(token: number, resume: typeof paused): Promise<void> {
 export function startAloud(from: AloudSource, opts: AloudOptions): void {
   if (!aloudSupported()) return;
   run++;
-  speechSynthesis.cancel();
-  // The first utterance has to be queued inside the tap itself (iOS); the text arrives a moment later.
-  const unlock = new SpeechSynthesisUtterance(' ');
-  unlock.volume = 0;
-  speechSynthesis.speak(unlock);
+  heard = false;
+  wakeAudio();
+  // Cancelling right before speaking can swallow the new utterance on iOS; only cancel what is there.
+  if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   source = from;
   options = opts;
   carry = '';
   paused = null;
-  set({ status: 'playing', sentence: '', lang: opts.lang, note: null });
+  const ready = prepared && prepared.key === from.pageKey() && prepared.chunks.length ? prepared : null;
+  prepared = null;
+  set({ status: 'playing', sentence: '', lang: ready?.lang ?? opts.lang, note: null });
   void holdScreen(true);
-  void play(run, null);
+  if (ready) {
+    // iOS lets a page speak only from a tap, so the first sentence is spoken right here, synchronously.
+    carry = ready.carry;
+    void play(run, { key: ready.key, chunks: ready.chunks, at: 0 });
+  } else {
+    const unlock = new SpeechSynthesisUtterance(' ');
+    unlock.volume = 0;
+    speechSynthesis.speak(unlock);
+    void play(run, null);
+  }
 }
 
 export function pauseAloud(): void {
@@ -266,7 +350,8 @@ export function pauseAloud(): void {
 export function resumeAloud(): void {
   if (state.status !== 'paused' || !source) return;
   run++;
-  speechSynthesis.cancel();
+  wakeAudio();
+  if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   set({ status: 'playing', note: null });
   void holdScreen(true);
   void play(run, paused);
