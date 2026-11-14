@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dev-dist/
+
+# Copied from node_modules/pdfjs-dist by scripts/copy-assets.mjs
+public/pdfjs/
+public/tesseract/
+
+# Local test books and the mock API's request log
+dev-samples/
+
+*.log
+.DS_Store
+*.tsbuildinfo
