@@ -2,7 +2,13 @@
   "name": "zakladka-reader",
   "private": true,
   "version": "0.1.0",
-  "description": "Закладка — PWA-читалка EPUB / PDF / DjVu з AI-агентами, нотатками та малюванням",
+  "description": "Закладка — PWA-читалка EPUB / PDF / DjVu / FB2 / MOBI з AI-агентами, нотатками, X-Ray і картками для запам'ятовування",
+  "license": "MIT",
+  "homepage": "https://ivlad003.github.io/zakladka/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ivlad003/zakladka.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +19,8 @@
     "copy-assets": "node scripts/copy-assets.mjs",
     "icons": "node scripts/make-icons.mjs",
     "predev": "node scripts/copy-assets.mjs",
-    "prebuild": "node scripts/copy-assets.mjs"
+    "prebuild": "node scripts/copy-assets.mjs",
+    "postbuild": "node scripts/licenses.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
