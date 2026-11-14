@@ -55,6 +55,10 @@ function TurningSettings() {
           <span>Свайпом</span>
         </label>
         <label className="field checkbox">
+          <input type="checkbox" checked={s.turnSwipe2} onChange={(e) => updateSettings({ turnSwipe2: e.target.checked })} />
+          <span>Свайпом двома пальцями (будь-де на сторінці)</span>
+        </label>
+        <label className="field checkbox">
           <input type="checkbox" checked={s.turnTap} onChange={(e) => updateSettings({ turnTap: e.target.checked })} />
           <span>Дотиком до лівого чи правого краю</span>
         </label>

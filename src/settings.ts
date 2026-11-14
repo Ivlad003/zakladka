@@ -27,6 +27,8 @@ export interface Settings {
   fixedFlow: FixedFlow;
   /** Ways of turning pages; any combination. */
   turnSwipe: boolean;
+  /** Two fingers moved sideways together turn the page (where one finger is taken by the browser or by panning). */
+  turnSwipe2: boolean;
   turnTap: boolean;
   /** A small floating group of buttons that can be dragged anywhere. */
   turnButtons: boolean;
@@ -119,6 +121,7 @@ const defaults: Settings = {
   // Phones and tablets turn pages like a book; with a mouse a continuous scroll is handier.
   fixedFlow: typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 'paged' : 'scrolled',
   turnSwipe: true,
+  turnSwipe2: true,
   turnTap: true,
   // On by default where there is no keyboard: buttons work even where a browser swallows gestures.
   turnButtons: typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches,

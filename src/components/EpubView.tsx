@@ -50,6 +50,8 @@ interface Props {
   flow: EpubFlow;
   /** Whether a horizontal swipe turns the page. */
   swipe: boolean;
+  /** Whether a sideways swipe with two fingers turns the page. */
+  swipe2: boolean;
   annotations: Annotation[];
   activeHit: SearchHit | null;
   onRelocated(pos: EpubPosition): void;
@@ -82,6 +84,11 @@ const FONT_STACKS: Record<EpubFont, string | null> = {
 };
 
 const STYLE_ID = 'zk-reader-style';
+/**
+ * Prefix that outweighs any selector a book is likely to use: an id inside :not() counts as an id.
+ * The reader's choice of font must win even over a book's own `!important` rules on classes.
+ */
+const STRONG = 'html:not(#zk-none)';
 
 function contentCss(p: Pick<Props, 'theme' | 'fontSize' | 'font' | 'lineHeight' | 'flow'>): string {
   const colors = READING_PALETTE[p.theme];
@@ -96,10 +103,11 @@ function contentCss(p: Pick<Props, 'theme' | 'fontSize' | 'font' | 'lineHeight' 
       color: ${colors.fg} !important;
       font-size: ${p.fontSize}% !important;
       line-height: ${p.lineHeight} !important;
-      ${font ? `font-family: ${font} !important;` : ''}
       -webkit-text-size-adjust: none; text-size-adjust: none;
     }
-    p, li, blockquote, dd, dt { line-height: inherit !important; ${font ? 'font-family: inherit !important;' : ''} }
+    p, li, blockquote, dd, dt { line-height: inherit !important; }
+    ${font ? `${STRONG} body { font-family: ${font} !important; }
+    ${STRONG} body *:not(pre):not(code):not(kbd):not(samp):not(tt):not(pre *):not(code *) { font-family: inherit !important; }` : ''}
     ${p.theme === 'light' ? '' : 'body * { color: inherit !important; background-color: transparent !important; }'}
     a, a * { color: ${colors.link} !important; }
     ::selection { background: rgba(80, 140, 255, 0.35); }
@@ -363,6 +371,13 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
             if (pinched < 1.18 && pinched > 0.85) return;
             propsRef.current.onPinch?.(pinched > 1 ? 1 : -1);
             pinched = 1;
+          },
+          swipe2: (dir) => {
+            if (!propsRef.current.swipe2 || turning || disposed) return;
+            const rtl = manager()?.settings.direction === 'rtl';
+            noteGesture('outcome', `два пальці: гортаю ${dir > 0 ? 'вперед' : 'назад'}`);
+            propsRef.current.onReadingGesture?.();
+            void turn(rtl ? (-dir as 1 | -1) : dir);
           },
         },
       };

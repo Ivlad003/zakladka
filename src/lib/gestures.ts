@@ -43,6 +43,8 @@ export interface TouchHandlers {
   cancel?(): void;
   /** Two fingers moved apart or together: multiply the zoom by `factor`, around `center` (relative to the element). */
   pinch?(factor: number, center: { x: number; y: number }): void;
+  /** Two fingers moved sideways together and were lifted: 1 for a swipe to the left (onwards), -1 to the right. */
+  swipe2?(dir: 1 | -1): void;
 }
 
 export interface TouchOptions {
@@ -65,9 +67,16 @@ export function attachTouch(
 ): () => void {
   let one: { x: number; y: number; t: number } | null = null;
   let pinch: { distance: number; applied: number; at: number } | null = null;
+  // Two fingers either pinch or travel together; which it is shows only after they have moved a little.
+  let two: { x: number; y: number; dx: number; dy: number; kind: 'undecided' | 'pinch' | 'swipe' } | null = null;
   let multi = false;
   const point = options.point ?? ((t: Touch) => ({ x: t.clientX, y: t.clientY }));
   const distance = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const middle = (a: Touch, b: Touch) => {
+    const p = point(a);
+    const q = point(b);
+    return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+  };
   const hasSelection =
     options.hasSelection ??
     (() => {
@@ -88,12 +97,34 @@ export function attachTouch(
       multi = true;
       tap.current.moved = true;
       pinch = { distance: distance(e.touches[0], e.touches[1]), applied: 1, at: 0 };
+      two = { ...middle(e.touches[0], e.touches[1]), dx: 0, dy: 0, kind: 'undecided' };
     }
   };
 
   const onMove = (e: TouchEvent) => {
     if (pinch && e.touches.length >= 2) {
       const now = performance.now();
+      if (two) {
+        const m = middle(e.touches[0], e.touches[1]);
+        two.dx = m.x - two.x;
+        two.dy = m.y - two.y;
+        if (two.kind === 'undecided') {
+          const spread = pinch.distance >= 10 ? distance(e.touches[0], e.touches[1]) / pinch.distance : 1;
+          if (Math.abs(spread - 1) > 0.1) {
+            two.kind = 'pinch';
+            // The zoom starts from here, without a jump for the part of the gesture spent deciding.
+            pinch.distance = distance(e.touches[0], e.touches[1]);
+          } else if (Math.abs(two.dx) > 30 && Math.abs(two.dx) > Math.abs(two.dy) * 1.5) {
+            two.kind = 'swipe';
+          } else {
+            return;
+          }
+        }
+        if (two.kind === 'swipe') {
+          noteGesture('move', `два пальці: dx ${Math.round(two.dx)}`);
+          return;
+        }
+      }
       if (now - pinch.at < 50 || pinch.distance < 10) return;
       const factor = distance(e.touches[0], e.touches[1]) / pinch.distance;
       const step = factor / pinch.applied;
@@ -117,7 +148,15 @@ export function attachTouch(
   };
 
   const onEnd = (e: TouchEvent) => {
-    if (e.touches.length < 2) pinch = null;
+    if (e.touches.length < 2) {
+      // Counted when the first of the two fingers leaves; a quick flick may never have been "decided".
+      if (two && two.kind !== 'pinch' && Math.abs(two.dx) > 40 && Math.abs(two.dx) > Math.abs(two.dy) * 1.5 && handlers.current.swipe2) {
+        noteGesture('end', `два пальці: dx ${Math.round(two.dx)}`);
+        handlers.current.swipe2(two.dx < 0 ? 1 : -1);
+      }
+      two = null;
+      pinch = null;
+    }
     if (e.touches.length > 0) return;
     tap.current.endedAt = Date.now();
     if (one && !multi) {
@@ -132,6 +171,7 @@ export function attachTouch(
   const onCancel = () => {
     noteGesture('cancel');
     pinch = null;
+    two = null;
     if (one) handlers.current.cancel?.();
     one = null;
     tap.current.moved = true;

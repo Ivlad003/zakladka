@@ -32,6 +32,8 @@ interface Props {
   flow: FixedFlow;
   /** Whether a horizontal swipe turns the page. */
   swipe: boolean;
+  /** Whether a sideways swipe with two fingers turns the page. */
+  swipe2: boolean;
   zoom: ZoomMode;
   annotations: Annotation[];
   ink: Map<number, Stroke[]>;
@@ -513,6 +515,11 @@ const Scroller = forwardRef<FixedViewApi, Props>(function Scroller(props, ref) {
       focalRef.current = center;
       propsRef.current.onZoom?.(factor);
     },
+    swipe2: (dir) => {
+      if (!propsRef.current.swipe2 || propsRef.current.draw) return;
+      noteGesture('outcome', `два пальці: гортаю ${dir > 0 ? 'вперед' : 'назад'}`);
+      goToPage(currentRef.current + dir);
+    },
   };
   useTouch(scrollerRef, touchRef, tapRef);
 
@@ -920,6 +927,12 @@ const Pager = forwardRef<FixedViewApi, Props>(function Pager(props, ref) {
       if (propsRef.current.draw) return;
       focalRef.current = center;
       propsRef.current.onZoom?.(factor);
+    },
+    swipe2: (dir) => {
+      if (!propsRef.current.swipe2 || propsRef.current.draw) return;
+      const turned = turn(dir);
+      noteGesture('outcome', turned ? `два пальці: гортаю ${dir > 0 ? 'вперед' : 'назад'}` : 'два пальці: далі сторінок немає');
+      if (turned) propsRef.current.onReadingGesture?.();
     },
   };
   useTouch(rootRef, touchRef, tapRef);

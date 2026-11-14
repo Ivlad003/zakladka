@@ -140,6 +140,7 @@ const SETTABLE: Record<string, z.ZodType> = {
   fixedZoom: z.union([z.enum(['fit-width', 'fit-page']), num(0.25, 6)]),
   invertInDark: flag,
   turnSwipe: flag,
+  turnSwipe2: flag,
   turnTap: flag,
   turnButtons: flag,
   turnZone: flag,

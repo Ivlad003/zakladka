@@ -42,9 +42,13 @@ export class EpubEngine implements EpubEngineLike {
   static async open(data: ArrayBuffer): Promise<EpubEngine> {
     const book = ePub(data);
     await book.ready;
-    // Runs on the text of every chapter right before it is put on screen.
+    // Runs on the text of every chapter right before it is put on screen. epub.js registered its own
+    // hook while opening the book — the one that points stylesheets and pictures at the unpacked
+    // files — and leaves its result in `section.output`; every hook is handed the untouched text,
+    // so the lock has to be applied to that result, not to the argument, or the book loses its
+    // styles and pictures.
     (book.spine as unknown as { hooks: { serialize: { register(fn: (output: string, section: { output: string }) => void): void } } }).hooks.serialize.register((output, section) => {
-      section.output = lockDown(output);
+      section.output = lockDown(section.output || output);
     });
     const engine = new EpubEngine(book);
 

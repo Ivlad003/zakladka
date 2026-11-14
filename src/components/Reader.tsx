@@ -1026,6 +1026,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               initialPage={clamp(unit, 0, unitCount - 1)}
               flow={settings.fixedFlow}
               swipe={settings.turnSwipe}
+              swipe2={settings.turnSwipe2}
               zoom={settings.fixedZoom}
               annotations={annotations}
               ink={ink}
@@ -1053,6 +1054,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               lineHeight={settings.epubLineHeight}
               flow={settings.epubFlow}
               swipe={settings.turnSwipe}
+              swipe2={settings.turnSwipe2}
               annotations={annotations}
               activeHit={activeHit}
               onRelocated={onRelocated}
