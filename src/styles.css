@@ -221,6 +221,20 @@ textarea {
   border-radius: 8px;
   background: var(--surface);
   min-width: 0;
+  max-width: 100%;
+}
+
+/* Screens and panels scroll up and down only. Should something still come out too wide (Safari sizes
+   some controls by their content), it is cut off instead of letting the whole screen slide sideways. */
+.library-main,
+.panel-body,
+.modal,
+.ai-messages,
+.lib-results,
+.review-card,
+.popover,
+.model-list {
+  overflow-x: hidden;
 }
 
 textarea {
@@ -1225,11 +1239,19 @@ textarea {
   justify-content: flex-start;
 }
 
+/* On a narrow phone the choices wrap onto a second line rather than run off the screen. */
 .segmented {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   padding: 2px;
   border-radius: 8px;
   background: var(--surface-2);
+}
+
+/* A row "name … control": the control moves under its name when both do not fit. */
+.field:not(.column):not(.checkbox) {
+  flex-wrap: wrap;
 }
 
 .segmented button {
@@ -1284,6 +1306,7 @@ textarea {
 .modal-header,
 .modal-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -1495,6 +1518,13 @@ textarea {
   margin: 0.55em 0;
 }
 
+/* A long link in a reply breaks instead of widening the conversation. */
+.md p,
+.md li,
+.md blockquote {
+  overflow-wrap: break-word;
+}
+
 .md ul,
 .md ol {
   padding-left: 1.3em;
@@ -1542,6 +1572,10 @@ textarea {
 .md table {
   border-collapse: collapse;
   font-size: 13px;
+  /* A wide table scrolls by itself rather than the whole conversation. */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .md th,
@@ -1886,15 +1920,21 @@ small code {
   }
 }
 
+/* minmax(0, …): a plain 1fr column is at least as wide as its content, and Safari makes a <select>
+   as wide as its longest option — a long book title then widened the whole screen sideways. */
 .field-pair {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.field-pair > * {
+  min-width: 0;
 }
 
 @media (max-width: 480px) {
   .field-pair {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -2824,9 +2864,13 @@ img {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  max-width: 100%;
 }
 
+/* A palace with a long name: the list takes what room there is instead of widening the step (Safari). */
 .study-actions select {
+  flex: 1 1 160px;
+  min-width: 0;
   max-width: 100%;
 }
 
@@ -2835,6 +2879,8 @@ img {
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
+  /* Links and code in cards have no spaces to break at. */
+  overflow-wrap: anywhere;
 }
 
 .study-card-meta {
@@ -2936,6 +2982,7 @@ img {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-wrap: anywhere;
   overscroll-behavior: contain;
   width: 100%;
   max-width: 680px;
