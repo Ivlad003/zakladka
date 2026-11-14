@@ -105,6 +105,11 @@ export interface Settings {
   aloudRate: number;
   aloudVoices: Record<string, string>;
   aloudLang: string;
+  /**
+   * iPhone: ask for the "playback" audio session so the voice sounds with the silent switch on.
+   * Off by default: on some iPhones this session silences Web Speech altogether.
+   */
+  aloudLoud: boolean;
   webSearch: WebSearch;
   /** Address of a SearXNG instance (or of a proxy to one) for `webSearch: 'searxng'`. */
   searxngUrl: string;
@@ -198,6 +203,7 @@ const defaults: Settings = {
   aloudRate: 1,
   aloudVoices: {},
   aloudLang: '',
+  aloudLoud: false,
   // "auto": through the app's own server when there is one (a real web search), otherwise Wikipedia.
   webSearch: 'auto',
   searxngUrl: '',

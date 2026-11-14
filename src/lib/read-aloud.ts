@@ -31,6 +31,8 @@ export interface AloudOptions {
   voices: Record<string, string>;
   /** Two-letter code, or empty to tell from the text. */
   lang: string;
+  /** iPhone: the "playback" audio session, which sounds through the silent switch (see wakeAudio). */
+  loud: boolean;
 }
 
 export const aloudSupported = (): boolean => typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined';
@@ -48,7 +50,9 @@ const subscribe = (l: () => void) => {
 export const useAloud = (): AloudState => useSyncExternalStore(subscribe, () => state);
 export const aloudState = (): AloudState => state;
 
-let options: AloudOptions = { rate: 1, voices: {}, lang: '' };
+let options: AloudOptions = { rate: 1, voices: {}, lang: '', loud: false };
+/** Languages whose chosen voice never started on this page; the language's default voice is used instead. */
+const voiceFailed = new Set<string>();
 let source: AloudSource | null = null;
 /** Bumped to abandon whatever is running: a stop, a pause, a new start. */
 let run = 0;
@@ -67,8 +71,8 @@ let prepared: { key: string; chunks: string[]; carry: string; lang: string } | n
 export const isIos = (): boolean => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 const SILENT_NOTE = isIos()
-  ? 'Не чути голосу? Вимкніть беззвучний режим (перемикач збоку iPhone) і додайте гучності. Якщо не допоможе — завантажте голос: Параметри → Універсальний доступ → Вміст мовлення → Голоси.'
-  : 'Пристрій не почав читати. Перевірте гучність і чи є в системі голос для цієї мови.';
+  ? 'iPhone не почав читати. Натисніть «Не чути?» нижче — перевірка покаже, що відбувається.'
+  : 'Пристрій не почав читати. Перевірте гучність і чи є в системі голос для цієї мови («Не чути?» нижче).';
 
 /** Half a second of silence as a WAV file, for waking the audio up inside a tap. */
 const SILENCE = (() => {
@@ -94,16 +98,19 @@ const SILENCE = (() => {
 })();
 
 /**
- * Inside the tap: asks for the playback audio session (Safari 16.4+: sound even with the silent
- * switch on, where the system allows it) and plays a moment of silence, which wakes the audio on iOS.
+ * Inside the tap. With `loud`: asks for the playback audio session (Safari 17+: sound even with the
+ * silent switch on) and plays a moment of silence to wake the audio. Without it the page keeps the
+ * system's own choice ("auto"): on some iPhones the playback session silences Web Speech entirely,
+ * so it is something the reader turns on after trying it, not the default.
  */
-function wakeAudio(): void {
+function wakeAudio(loud: boolean): void {
   try {
     const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
-    if (session) session.type = 'playback';
+    if (session && session.type !== (loud ? 'playback' : 'auto')) session.type = loud ? 'playback' : 'auto';
   } catch {
     // Not every browser lets this be set.
   }
+  if (!loud) return;
   try {
     const audio = new Audio(SILENCE);
     audio.setAttribute('playsinline', '');
@@ -199,42 +206,125 @@ export function voicesFor(lang: string): SpeechSynthesisVoice[] {
     .sort((a, b) => Number(b.localService) - Number(a.localService) || Number(b.default) - Number(a.default) || a.name.localeCompare(b.name));
 }
 
-function pickVoice(lang: string): SpeechSynthesisVoice | null {
-  const mine = voicesFor(lang);
-  return mine.find((v) => v.voiceURI === options.voices[lang]) ?? mine[0] ?? null;
+/**
+ * The voice the reader chose for the language, if the device still has it. Without a choice no
+ * voice is set, only the language: the system then uses its own default for it (on iPhone, the one
+ * picked in Settings), rather than some voice from the list it may list but not be able to use.
+ */
+function chosenVoice(lang: string): SpeechSynthesisVoice | null {
+  if (!options.voices[lang] || voiceFailed.has(lang)) return null;
+  return voicesFor(lang).find((v) => v.voiceURI === options.voices[lang]) ?? null;
 }
+
+const hasVoice = (lang: string) => voicesFor(lang).length > 0;
+
+const utteranceFor = (text: string, lang: string, voice: SpeechSynthesisVoice | null, rate: number) => {
+  const utterance = new SpeechSynthesisUtterance(text);
+  if (voice) utterance.voice = voice;
+  utterance.lang = voice?.lang ?? LANG_TAG[lang] ?? lang;
+  utterance.rate = rate;
+  return utterance;
+};
 
 // ---- Speaking ----
 function say(text: string, token: number): Promise<void> {
   return new Promise((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = pickVoice(state.lang);
-    if (voice) utterance.voice = voice;
-    utterance.lang = voice?.lang ?? LANG_TAG[state.lang] ?? state.lang;
-    utterance.rate = options.rate;
-    // Some engines never report the end of an utterance; nothing waits on one for ever.
-    const limit = setTimeout(done, 20_000 + text.length * 250);
-    function done() {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       clearTimeout(limit);
-      if (speaking === utterance) speaking = null;
       resolve();
-    }
-    utterance.onend = done;
-    utterance.onerror = (e) => {
-      // "not-allowed": the page may not speak — on iOS, speech has to begin in a tap.
-      if ((e as SpeechSynthesisErrorEvent).error === 'not-allowed' && token === run) set({ note: SILENT_NOTE });
-      done();
     };
-    utterance.onstart = () => {
-      heard = true;
-    };
-    speaking = utterance;
-    if (token === run) {
+    // Some engines never report the end of an utterance; nothing waits on one for ever.
+    const limit = setTimeout(finish, 25_000 + text.length * 250);
+    const attempt = (voice: SpeechSynthesisVoice | null) => {
+      const utterance = utteranceFor(text, state.lang, voice, options.rate);
+      let started = false;
+      utterance.onstart = () => {
+        started = true;
+        heard = true;
+      };
+      utterance.onend = () => speaking === utterance && finish();
+      utterance.onerror = (e) => {
+        if (speaking !== utterance) return;
+        // "not-allowed": the page may not speak — on iOS, speech has to begin in a tap.
+        if ((e as SpeechSynthesisErrorEvent).error === 'not-allowed' && token === run) set({ note: SILENT_NOTE });
+        finish();
+      };
+      speaking = utterance;
+      // A synthesizer left paused (the app was in the background) queues new speech without saying it.
+      if (speechSynthesis.paused) speechSynthesis.resume();
       speechSynthesis.speak(utterance);
-      // Nothing started after a while: the device is not speaking, and the reader should know why.
-      if (!heard) setTimeout(() => !heard && token === run && speaking === utterance && set({ note: SILENT_NOTE }), 4000);
-    } else done();
+      setTimeout(() => {
+        if (started || finished || heard || token !== run || speaking !== utterance) return;
+        if (voice) {
+          // The chosen voice does not start (iOS lists voices it cannot use from a web page):
+          // the language's default voice instead, for the rest of this visit.
+          voiceFailed.add(state.lang);
+          speaking = null;
+          speechSynthesis.cancel();
+          setTimeout(() => token === run && !finished && attempt(null), 150);
+        } else set({ note: SILENT_NOTE });
+      }, 4000);
+    };
+    if (token === run) attempt(chosenVoice(state.lang));
+    else finish();
   });
+}
+
+// ---- Checking the voice ----
+const TEST_TEXT: Record<string, string> = {
+  uk: 'Перевірка голосу. Якщо ви це чуєте, читання вголос працює.',
+  ru: 'Проверка голоса. Если вы это слышите, чтение вслух работает.',
+  en: 'Voice check. If you can hear this, reading aloud works.',
+  pl: 'Sprawdzanie głosu. Jeśli to słyszysz, czytanie na głos działa.',
+  de: 'Stimmprüfung. Wenn Sie das hören, funktioniert das Vorlesen.',
+  fr: 'Test de la voix. Si vous entendez ceci, la lecture à voix haute fonctionne.',
+  es: 'Prueba de voz. Si oyes esto, la lectura en voz alta funciona.',
+};
+let testing: SpeechSynthesisUtterance | null = null;
+
+/**
+ * Says a short phrase and reports, line by line, what the device does with it: whether it started,
+ * finished or failed, and with which voice. Must be called from a tap, like startAloud.
+ */
+export function testVoice(opts: { lang: string; voiceURI: string; loud: boolean }, log: (line: string) => void): void {
+  if (!aloudSupported()) return log('Цей браузер не вміє читати вголос (немає Web Speech API).');
+  if (state.status !== 'idle') stopAloud();
+  wakeAudio(opts.loud);
+  if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+  if (speechSynthesis.paused) speechSynthesis.resume();
+  const lang = opts.lang || 'uk';
+  const mine = voicesFor(lang);
+  const voice = opts.voiceURI ? (mine.find((v) => v.voiceURI === opts.voiceURI) ?? null) : null;
+  const utterance = utteranceFor(TEST_TEXT[lang] ?? TEST_TEXT.en, lang, voice, 1);
+  const ios = /OS (\d+)[._](\d+)/.exec(navigator.userAgent);
+  const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
+  log(`${isIos() ? `iPhone/iPad${ios ? `, iOS ${ios[1]}.${ios[2]}` : ''}` : 'Пристрій'}, ${standalone ? 'застосунок з головного екрана' : 'у браузері'}${opts.loud ? ', режим «гучно в беззвучному»' : ''}.`);
+  log(`Голосів: ${speechSynthesis.getVoices().length}, для «${lang}»: ${mine.length}${mine.length ? ` (${mine.slice(0, 3).map((v) => v.name).join(', ')}${mine.length > 3 ? '…' : ''})` : ''}. Читаю ${voice ? `голосом ${voice.name}` : `типовим голосом для ${utterance.lang}`}.`);
+  const t0 = performance.now();
+  const at = () => `${((performance.now() - t0) / 1000).toFixed(1)} с`;
+  let started = false;
+  let ended = false;
+  utterance.onstart = () => {
+    started = true;
+    log(`▶ Почав говорити (${at()}).`);
+  };
+  utterance.onend = () => {
+    ended = true;
+    log(`■ Договорив (${at()}). Якщо при цьому нічого не було чути — звук приглушено: беззвучний режим, гучність, навушники чи колонка по Bluetooth.`);
+  };
+  utterance.onerror = (e) => {
+    ended = true;
+    log(`✕ Помилка «${(e as SpeechSynthesisErrorEvent).error}» (${at()}).`);
+  };
+  testing = utterance;
+  speechSynthesis.speak(utterance);
+  setTimeout(() => {
+    if (started || ended || testing !== utterance) return;
+    log(`За 4 с так і не почав говорити (speaking: ${speechSynthesis.speaking ? 'так' : 'ні'}, у черзі: ${speechSynthesis.pending ? 'так' : 'ні'}, на паузі: ${speechSynthesis.paused ? 'так' : 'ні'}).`);
+  }, 4000);
 }
 
 async function holdScreen(on: boolean): Promise<void> {
@@ -272,7 +362,7 @@ async function play(token: number, resume: typeof paused): Promise<void> {
       chunks = toChunks(whole);
       if (!state.lang && joined) {
         const lang = options.lang || guessLang(joined);
-        set({ lang, note: pickVoice(lang) ? null : `На цьому пристрої немає голосу для мови «${lang}» — вимова може бути неправильною. Голоси додаються в налаштуваннях системи.` });
+        set({ lang, note: hasVoice(lang) ? null : `На цьому пристрої немає голосу для мови «${lang}» — вимова може бути неправильною. Голоси додаються в налаштуваннях системи.` });
       }
     }
     pending = null;
@@ -316,7 +406,7 @@ export function startAloud(from: AloudSource, opts: AloudOptions): void {
   if (!aloudSupported()) return;
   run++;
   heard = false;
-  wakeAudio();
+  wakeAudio(opts.loud);
   // Cancelling right before speaking can swallow the new utterance on iOS; only cancel what is there.
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   source = from;
@@ -350,7 +440,7 @@ export function pauseAloud(): void {
 export function resumeAloud(): void {
   if (state.status !== 'paused' || !source) return;
   run++;
-  wakeAudio();
+  wakeAudio(options.loud);
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   set({ status: 'playing', note: null });
   void holdScreen(true);
@@ -372,7 +462,7 @@ export function setAloudOptions(next: AloudOptions): void {
   const langChanged = next.lang !== options.lang && Boolean(next.lang);
   options = next;
   if (!langChanged || state.status === 'idle') return;
-  set({ lang: next.lang, note: pickVoice(next.lang) ? null : `На цьому пристрої немає голосу для мови «${next.lang}».` });
+  set({ lang: next.lang, note: hasVoice(next.lang) ? null : `На цьому пристрої немає голосу для мови «${next.lang}».` });
   if (state.status === 'playing') {
     run++;
     speechSynthesis.cancel();

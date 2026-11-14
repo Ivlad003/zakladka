@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pause, Play, Volume2, X } from 'lucide-react';
-import { aloudSupported, isIos, pauseAloud, prepareAloud, resumeAloud, setAloudOptions, startAloud, stopAloud, useAloud, voicesFor, type AloudOptions, type AloudSource } from '../lib/read-aloud';
+import { aloudSupported, isIos, pauseAloud, prepareAloud, resumeAloud, setAloudOptions, startAloud, stopAloud, testVoice, useAloud, voicesFor, type AloudOptions, type AloudSource } from '../lib/read-aloud';
 import { updateSettings, useSettings } from '../settings';
 
 const RATES = [0.8, 1, 1.2, 1.5, 1.8];
@@ -43,11 +43,19 @@ export function ReadAloudBar({ source, onClose }: Props) {
     return () => clearInterval(timer);
   }, [source, settings.aloudLang]);
 
-  const options: AloudOptions = { rate: settings.aloudRate, voices: settings.aloudVoices, lang: settings.aloudLang };
-  const change = (patch: Partial<Pick<AloudOptions, 'rate' | 'voices' | 'lang'>>) => {
+  const options: AloudOptions = { rate: settings.aloudRate, voices: settings.aloudVoices, lang: settings.aloudLang, loud: settings.aloudLoud };
+  const change = (patch: Partial<Pick<AloudOptions, 'rate' | 'voices' | 'lang' | 'loud'>>) => {
     const next = { ...options, ...patch };
-    updateSettings({ aloudRate: next.rate, aloudVoices: next.voices, aloudLang: next.lang });
+    updateSettings({ aloudRate: next.rate, aloudVoices: next.voices, aloudLang: next.lang, aloudLoud: next.loud });
     setAloudOptions(next);
+  };
+  // "Can't hear it?": a test phrase and what the device reports doing with it.
+  const [checking, setChecking] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  const check = (voiceURI: string) => {
+    setLog([]);
+    // Called right inside the tap: iOS lets a page speak only from one.
+    testVoice({ lang: aloud.lang || settings.aloudLang || 'uk', voiceURI, loud: settings.aloudLoud }, (line) => setLog((lines) => [...lines, line]));
   };
 
   if (!aloudSupported()) {
@@ -117,7 +125,45 @@ export function ReadAloudBar({ source, onClose }: Props) {
         )}
       </div>
       {aloud.note && aloud.sentence && <small className="aloud-note">{aloud.note}</small>}
-      {aloud.status === 'idle' && !aloud.note && isIos() && <small className="aloud-note">На iPhone голос не чути в беззвучному режимі — перемикач збоку.</small>}
+      {aloud.status === 'idle' && !aloud.note && isIos() && !settings.aloudLoud && <small className="aloud-note">На iPhone голос не чути в беззвучному режимі — перемикач збоку.</small>}
+      <button className="link aloud-help" onClick={() => setChecking((v) => !v)} aria-expanded={checking}>
+        {checking ? 'Сховати перевірку' : 'Не чути?'}
+      </button>
+      {checking && (
+        <div className="aloud-check">
+          <div className="aloud-row">
+            <button className="btn small primary" onClick={() => check(settings.aloudVoices[lang || 'uk'] ?? '')}>
+              Перевірити голос
+            </button>
+            {settings.aloudVoices[lang || 'uk'] && (
+              <button className="btn small" onClick={() => check('')}>
+                Типовим голосом
+              </button>
+            )}
+          </div>
+          {isIos() && (
+            <>
+              <label className="field checkbox">
+                <input type="checkbox" checked={settings.aloudLoud} onChange={(e) => change({ loud: e.target.checked })} />
+                <span>Гучно навіть у беззвучному режимі</span>
+              </label>
+              <small className="aloud-note">На одних iPhone так голос чути й з вимкненим звуком, а на інших він через це зовсім зникає. Перевірте з позначкою і без неї та залиште варіант, у якому чути.</small>
+            </>
+          )}
+          {log.length > 0 && (
+            <ol className="aloud-log" aria-live="polite">
+              {log.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ol>
+          )}
+          <small className="aloud-note">
+            {isIos()
+              ? 'Ще причини: перемикач беззвучного режиму збоку, гучність (додавайте кнопками під час читання), підключені навушники чи колонка. Голоси: Параметри → Універсальний доступ → Вміст мовлення → Голоси.'
+              : 'Ще причини: гучність, вибраний пристрій виводу звуку, відсутній голос для мови в налаштуваннях системи.'}
+          </small>
+        </div>
+      )}
     </div>
   );
 }
