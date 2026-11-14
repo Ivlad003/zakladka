@@ -4,6 +4,7 @@
 // FB2 is one XML file: a description (title, authors, cover), one or more bodies made of nested
 // sections, and the pictures as base64 at the end. The second body, when there is one, holds notes.
 import JSZip from 'jszip';
+import { buildEpub } from './epub-build';
 
 /** The FB2 document inside a file, or null when the file is not FB2 (plain, or zipped as .fb2.zip / .fbz). */
 export async function readFb2(file: File): Promise<Uint8Array | null> {
@@ -107,16 +108,6 @@ div.annotation { font-style: italic; margin: 1em 0; }
 p.series, p.authors { text-align: center; text-indent: 0; }
 table { border-collapse: collapse; margin: 1em auto; } td, th { border: 1px solid #888; padding: 2px 6px; }
 `;
-
-const page = (title: string, lang: string, body: string) =>
-  `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="${esc(lang)}" xml:lang="${esc(lang)}">
-<head><meta charset="UTF-8"/><title>${esc(title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body>
-${body}
-</body>
-</html>`;
 
 export interface Fb2Book {
   epub: Blob;
@@ -312,59 +303,21 @@ export async function fb2ToEpub(bytes: Uint8Array): Promise<Fb2Book> {
   if (!files.some((f) => f.name.startsWith('ch'))) throw new Error('у файлі FB2 немає тексту');
 
   // ---- The EPUB ----
-  const zip = new JSZip();
-  // A fixed date: the same FB2 must give the same EPUB on every device.
-  const date = new Date(Date.UTC(2000, 0, 1));
-  zip.file('mimetype', 'application/epub+zip', { compression: 'STORE', date });
-  zip.file('META-INF/container.xml', `<?xml version="1.0"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`, { date });
-  zip.file('OEBPS/style.css', STYLE, { date });
-  for (const file of files) {
-    const html = file.html.replace(/href="fb2:([^"]+)"/g, (_, id: string) => `href="${anchors.get(id) === file.name ? '' : (anchors.get(id) ?? '')}#${id}"`);
-    zip.file(`OEBPS/${file.name}`, page(file.title, lang, html), { date });
-  }
-  const used = [...pictures.values()];
-  for (const picture of used) zip.file(`OEBPS/${picture.file}`, picture.data, { date });
-  const cover = pictures.get(coverRef);
-
-  const nav: string[] = [];
-  let open = 0;
-  for (const entry of toc) {
-    const depth = Math.min(entry.depth, open + 1);
-    if (depth > open) nav.push('<ol>');
-    else nav.push('</li>', ...Array.from({ length: open - depth }, () => '</ol></li>'));
-    open = depth;
-    nav.push(`<li><a href="${esc(entry.href)}">${esc(entry.title)}</a>`);
-  }
-  if (open) nav.push('</li>', ...Array.from({ length: open - 1 }, () => '</ol></li>'), '</ol>');
-  zip.file('OEBPS/nav.xhtml', page(title, lang, `<nav epub:type="toc" id="toc"><h1>Зміст</h1>\n${nav.join('\n') || `<ol><li><a href="${files[0].name}">${esc(title)}</a></li></ol>`}\n</nav>`), { date });
-
-  const manifest = [
-    '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
-    '<item id="css" href="style.css" media-type="text/css"/>',
-    ...files.map((f, i) => `<item id="t${i}" href="${f.name}" media-type="application/xhtml+xml"/>`),
-    ...used.map((p, i) => `<item id="${p === cover ? 'cover-image' : `i${i}`}" href="${esc(p.file)}" media-type="${esc(p.type)}"${p === cover ? ' properties="cover-image"' : ''}/>`),
-  ];
-  zip.file(
-    'OEBPS/content.opf',
-    `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
-<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-<dc:identifier id="uid">urn:fb2:${bytes.length}-${files.length}</dc:identifier>
-<dc:title>${esc(title)}</dc:title>
-${authors.map((a) => `<dc:creator>${esc(a)}</dc:creator>`).join('\n')}
-<dc:language>${esc(lang)}</dc:language>
-<meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>
-${cover ? '<meta name="cover" content="cover-image"/>' : ''}
-</metadata>
-<manifest>
-${manifest.join('\n')}
-</manifest>
-<spine>
-${files.map((_, i) => `<itemref idref="t${i}"/>`).join('\n')}
-</spine>
-</package>`,
-    { date },
-  );
-  const epub = await zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const epub = await buildEpub({
+    id: `urn:fb2:${bytes.length}-${files.length}`,
+    title,
+    authors,
+    lang,
+    css: STYLE,
+    files: files.map((file) => ({
+      name: file.name,
+      title: file.title,
+      // Links inside the book now know which file their target ended up in.
+      body: file.html.replace(/href="fb2:([^"]+)"/g, (_, id: string) => `href="${anchors.get(id) === file.name ? '' : (anchors.get(id) ?? '')}#${id}"`),
+    })),
+    images: [...pictures.values()],
+    cover: pictures.get(coverRef)?.file,
+    toc,
+  });
   return { epub, title, author: authors.join(', ') };
 }

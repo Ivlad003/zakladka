@@ -12,20 +12,36 @@ function isUsableTitle(title: string | undefined): title is string {
 
 export class UnsupportedFileError extends Error {}
 
+/**
+ * Formats the reader has no engine for but can turn into an EPUB: FB2 (plain or zipped) and Kindle
+ * books without DRM (MOBI, PRC, AZW, AZW3). Each converter is loaded only when such a file turns up.
+ */
+async function convertToEpub(chosen: File): Promise<{ file: File; original: ArrayBuffer } | null> {
+  const exact = (bytes: Uint8Array) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const named = (epub: Blob, ending: RegExp) => new File([epub], `${chosen.name.replace(ending, '')}.epub`, { type: 'application/epub+zip' });
+  if (/\.(fb2|fb2\.zip|fbz|zip)$/i.test(chosen.name)) {
+    const { readFb2, fb2ToEpub } = await import('../engines/fb2');
+    const fb2 = await readFb2(chosen);
+    if (fb2) return { file: named((await fb2ToEpub(fb2)).epub, /\.(fb2\.zip|fbz|fb2|zip)$/i), original: exact(fb2) };
+  }
+  // Kindle books are told by their signature: the extension may be .mobi, .prc, .azw or .azw3.
+  const head = new Uint8Array(await chosen.slice(0, 68).arrayBuffer());
+  if (head.length === 68 && String.fromCharCode(...head.subarray(60, 68)) === 'BOOKMOBI') {
+    const { mobiToEpub } = await import('../engines/mobi');
+    const bytes = new Uint8Array(await chosen.arrayBuffer());
+    return { file: named((await mobiToEpub(bytes)).epub, /\.(mobi|prc|azw3?|kf8)$/i), original: exact(bytes) };
+  }
+  return null;
+}
+
 /** Adds a file to the library and returns the book id (the existing id if it was already imported). */
 export async function importBook(chosen: File): Promise<string> {
-  // FB2 becomes an EPUB on the way in. The id still comes from the FB2 itself, so the same book
-  // added on two devices — zipped on one, plain on the other — is one book to the sync.
-  let file = chosen;
-  // The converter is loaded only when a file looks like FB2: most readers never need it.
-  const converter = /\.(fb2|fb2\.zip|fbz|zip)$/i.test(chosen.name) ? await import('../engines/fb2') : null;
-  const fb2 = converter ? await converter.readFb2(chosen) : null;
-  if (converter && fb2) {
-    const converted = await converter.fb2ToEpub(fb2);
-    file = new File([converted.epub], `${chosen.name.replace(/\.(fb2\.zip|fbz|fb2|zip)$/i, '')}.epub`, { type: 'application/epub+zip' });
-  }
+  // FB2 and MOBI become an EPUB on the way in. The id still comes from the original, so the same
+  // book added on two devices — zipped on one, plain on the other — is one book to the sync.
+  const converted = await convertToEpub(chosen);
+  const file = converted?.file ?? chosen;
   const format = await detectFormat(file);
-  if (!format) throw new UnsupportedFileError(`«${chosen.name}»: підтримуються EPUB, PDF, DjVu та FB2`);
+  if (!format) throw new UnsupportedFileError(`«${chosen.name}»: підтримуються EPUB, PDF, DjVu, FB2 та MOBI`);
 
   // Books added before ids were derived from the content are recognised by name and size.
   const legacy = await db.books.filter((b) => b.fileName === file.name && b.size === file.size && !b.cloudOnly).first();
@@ -33,7 +49,7 @@ export async function importBook(chosen: File): Promise<string> {
 
   // The id is a hash of the file, so the same book gets the same id on every device and its
   // notes and reading position meet when the devices sync.
-  const id = (await sha256Hex(fb2 ? (fb2.buffer.slice(fb2.byteOffset, fb2.byteOffset + fb2.byteLength) as ArrayBuffer) : await file.arrayBuffer())).slice(0, 32);
+  const id = (await sha256Hex(converted?.original ?? (await file.arrayBuffer()))).slice(0, 32);
   const existing = await db.books.get(id);
   if (existing) {
     if (existing.cloudOnly) {

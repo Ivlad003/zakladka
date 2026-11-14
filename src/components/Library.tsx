@@ -18,7 +18,7 @@ const LibraryAssistant = lazy(() => import('./LibraryAssistant').then((m) => ({ 
 
 // Phones and tablets do not know the DjVu (and sometimes EPUB) file types and grey such files out
 // in the picker when a filter is set, so there the filter is dropped; the format is checked on import anyway.
-const ACCEPT = matchMedia('(pointer: coarse)').matches ? undefined : '.epub,.pdf,.djvu,.djv,.fb2,.fbz,.zip,application/epub+zip,application/pdf,image/vnd.djvu';
+const ACCEPT = matchMedia('(pointer: coarse)').matches ? undefined : '.epub,.pdf,.djvu,.djv,.fb2,.fbz,.zip,.mobi,.prc,.azw,.azw3,application/epub+zip,application/pdf,image/vnd.djvu';
 /** Stands for "on no shelf" among the shelf filters; no shelf can be named this. */
 const NO_SHELF = '\u0000';
 const SORTS: [LibrarySort, string][] = [
@@ -255,7 +255,7 @@ export function Library({ onOpen, onInstall }: Props) {
             <Upload size={40} />
             <h1>Додайте першу книгу</h1>
             <p className="muted">
-              Перетягніть сюди файли EPUB, PDF, DjVu або FB2 чи виберіть їх на пристрої. Книги зберігаються лише у вашому браузері й доступні без інтернету.
+              Перетягніть сюди файли EPUB, PDF, DjVu, FB2 або MOBI чи виберіть їх на пристрої. Книги зберігаються лише у вашому браузері й доступні без інтернету.
             </p>
             <button className="btn primary large" onClick={() => fileRef.current?.click()}>
               <Plus size={18} /> Вибрати файли
