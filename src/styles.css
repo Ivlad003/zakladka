@@ -3823,3 +3823,452 @@ img {
   flex-shrink: 0;
   font-size: 12px;
 }
+
+
+/* ---------- Reading statistics ---------- */
+.stats-chip {
+  flex-shrink: 0;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.stats-chip svg {
+  color: #e8590c;
+}
+
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.stat-tile svg {
+  color: var(--accent);
+}
+
+.stat-tile strong {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-tile .muted {
+  font-size: 12.5px;
+}
+
+.goal-bar {
+  height: 5px;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.goal-bar div {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.days-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+
+.chart-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-bar {
+  fill: color-mix(in srgb, var(--accent) 55%, var(--surface));
+}
+
+.chart-bar.active {
+  fill: var(--accent);
+}
+
+.chart-axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.chart-goal line {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.chart-goal text,
+.chart-tick {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.chart-table {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.chart-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+}
+
+.chart-table td,
+.chart-table th {
+  padding: 3px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-books {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stats-books li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.stats-books .muted {
+  font-size: 12.5px;
+}
+
+
+/* ---------- Reading comfort ---------- */
+.reader.margins-narrow .epub-stage {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+.reader.margins-wide .epub-stage {
+  padding-left: clamp(32px, 9vw, 160px) !important;
+  padding-right: clamp(32px, 9vw, 160px) !important;
+}
+
+.swipe-bar-label.two-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+}
+
+.swipe-bar-label.two-lines > span,
+.swipe-bar-label.two-lines > small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swipe-bar-label.two-lines > small {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.time-left {
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.footnote-backdrop {
+  align-items: flex-end;
+  background: rgb(0 0 0 / 0.18);
+}
+
+.footnote-sheet {
+  width: min(560px, 100%);
+  max-height: 55vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 auto;
+  padding: 14px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  border: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: sheet-up 0.22s cubic-bezier(0.22, 0.8, 0.24, 1);
+}
+
+.footnote-sheet p {
+  margin: 0;
+  overflow-y: auto;
+  line-height: 1.5;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.footnote-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.font-picker .btn {
+  position: relative;
+  cursor: pointer;
+}
+
+
+/* ---------- X-Ray ---------- */
+.xray-title {
+  padding: 0 8px;
+}
+
+.xray-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+}
+
+.xray-list > li {
+  padding: 6px 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.xray-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0 4px;
+  text-align: left;
+}
+
+.xray-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.xray-spread {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.xray-spread-bg {
+  fill: var(--surface-2);
+}
+
+.xray-spread-mark {
+  fill: var(--accent);
+}
+
+.xray-spread-here {
+  stroke: #e8590c;
+  stroke-width: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.xray-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.xray-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.xray-mentions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.xray-mentions .hit.ahead {
+  opacity: 0.6;
+}
+
+/* ---------- Dictionary card ---------- */
+.dictionary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 13.5px;
+  text-align: left;
+}
+
+.dictionary-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dictionary-head svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.dictionary-meanings {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 7.5em;
+  overflow-y: auto;
+  line-height: 1.4;
+}
+
+.dictionary-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.dictionary-actions .link,
+.dictionary-head .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.popup-dictionary {
+  flex-basis: 100%;
+  width: 320px;
+  max-width: 80vw;
+  margin-top: 6px;
+}
+
+/* Seven actions do not fit a phone's width: the row scrolls sideways. */
+.action-bar-row {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.action-bar-row::-webkit-scrollbar {
+  display: none;
+}
+
+.action-bar-row .tab-btn {
+  min-width: 62px;
+  flex-shrink: 0;
+}
+
+/* ---------- Quote picture ---------- */
+.quote-card {
+  width: min(520px, 100%);
+}
+
+.quote-preview {
+  display: flex;
+  justify-content: center;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.quote-preview canvas {
+  max-width: 100%;
+  max-height: 46vh;
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.quote-looks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+
+
+/* ---------- Adding books and articles ---------- */
+.add-sheet {
+  width: min(480px, 100%);
+}
+
+.add-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: left;
+}
+
+button.add-choice:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.add-choice svg {
+  flex-shrink: 0;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.add-choice span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.add-choice.article {
+  margin-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom: none;
+}
+
+.article-form {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 12px;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+}
+
+.article-form input {
+  flex: 1;
+  min-width: 0;
+}

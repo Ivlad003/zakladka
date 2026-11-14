@@ -1,5 +1,6 @@
+import { db } from '../db';
 import { Minus, Plus } from 'lucide-react';
-import { cx } from '../lib/utils';
+import { cx, truncate } from '../lib/utils';
 import { updateSettings, useSettings, type EpubFont, type Theme, type TurnExtra } from '../settings';
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -141,6 +142,18 @@ export function ViewSettings({ kind, scale, textMode, onClose }: { kind: 'fixed'
           <span>Тема</span>
           <Segmented value={s.theme} options={THEMES} onChange={(theme) => updateSettings({ theme })} />
         </label>
+        <label className="field">
+          <span>Дві сторінки поруч</span>
+          <Segmented
+            value={s.spread}
+            options={[
+              { id: 'auto', label: 'Широкий екран' },
+              { id: 'landscape', label: '+ планшет боком' },
+              { id: 'off', label: 'Ні' },
+            ]}
+            onChange={(spread) => updateSettings({ spread })}
+          />
+        </label>
 
         {textMode && (
           <>
@@ -188,9 +201,64 @@ export function ViewSettings({ kind, scale, textMode, onClose }: { kind: 'fixed'
                   { id: 'publisher', label: 'Книги' },
                   { id: 'serif', label: 'Із зарубками' },
                   { id: 'sans', label: 'Без зарубок' },
+                  ...(s.epubCustomFontName ? [{ id: 'custom' as EpubFont, label: truncate(s.epubCustomFontName, 14) }] : []),
                 ]}
                 onChange={(epubFont) => updateSettings({ epubFont })}
               />
+            </label>
+            <FontPicker />
+            <label className="field">
+              <span>Поля</span>
+              <Segmented
+                value={s.epubMargins}
+                options={[
+                  { id: 'narrow', label: 'Вузькі' },
+                  { id: 'normal', label: 'Звичайні' },
+                  { id: 'wide', label: 'Широкі' },
+                ]}
+                onChange={(epubMargins) => updateSettings({ epubMargins })}
+              />
+            </label>
+            <label className="field">
+              <span>Вирівнювання</span>
+              <Segmented
+                value={s.epubAlign}
+                options={[
+                  { id: 'publisher', label: 'Як у книзі' },
+                  { id: 'left', label: 'Ліворуч' },
+                  { id: 'justify', label: 'По ширині' },
+                ]}
+                onChange={(epubAlign) => updateSettings({ epubAlign })}
+              />
+            </label>
+            <label className="field">
+              <span>Між абзацами</span>
+              <Segmented
+                value={s.epubParagraphGap}
+                options={[
+                  { id: 'publisher', label: 'Як у книзі' },
+                  { id: 'none', label: 'Без' },
+                  { id: 'small', label: 'Трохи' },
+                  { id: 'large', label: 'Рядок' },
+                ]}
+                onChange={(epubParagraphGap) => updateSettings({ epubParagraphGap })}
+              />
+            </label>
+            <label className="field">
+              <span>Між літерами</span>
+              <Segmented
+                value={String(s.epubLetterSpacing)}
+                options={[
+                  { id: '0', label: 'Звично' },
+                  { id: '0.03', label: 'Ширше' },
+                  { id: '0.06', label: 'Ще ширше' },
+                ]}
+                onChange={(v) => updateSettings({ epubLetterSpacing: Number(v) })}
+              />
+            </label>
+            <label className="field checkbox">
+              <input type="checkbox" checked={s.epubHyphens} onChange={(e) => updateSettings({ epubHyphens: e.target.checked })} />
+              <span>Переносити слова</span>
             </label>
             <label className="field">
               <span>Міжрядковий інтервал</span>
@@ -252,5 +320,30 @@ export function ViewSettings({ kind, scale, textMode, onClose }: { kind: 'fixed'
         <TurningSettings />
       </div>
     </>
+  );
+}
+
+/** Adds the reader's own font (TTF, OTF, WOFF): kept in the database, shown as an option next to the others. */
+function FontPicker() {
+  const s = useSettings();
+  return (
+    <label className="field font-picker">
+      <span>{s.epubCustomFontName ? 'Свій шрифт' : 'Додати свій шрифт'}</span>
+      <span className="btn small">
+        {s.epubCustomFontName ? 'Замінити…' : 'Вибрати файл…'}
+        <input
+          type="file"
+          accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+          hidden
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file) return;
+            await db.assets.put({ id: 'font', name: file.name, data: file });
+            updateSettings({ epubCustomFontName: file.name.replace(/\.[^.]+$/, ''), epubFont: 'custom' });
+          }}
+        />
+      </span>
+    </label>
   );
 }

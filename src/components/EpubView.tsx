@@ -52,6 +52,14 @@ interface Props {
   swipe: boolean;
   /** Whether a sideways swipe with two fingers turns the page. */
   swipe2: boolean;
+  /** Typography beyond the font and its size. */
+  typography: Typography;
+  /** Object URL of the reader's own font, when they chose it. */
+  customFontUrl?: string;
+  /** Two pages side by side. */
+  spread: boolean;
+  /** A link to a footnote was followed: its text, for a popup instead of a jump. */
+  onFootnote?(note: { text: string; href: string }): void;
   annotations: Annotation[];
   activeHit: SearchHit | null;
   onRelocated(pos: EpubPosition): void;
@@ -77,23 +85,88 @@ interface PageManager {
 const EASE = 'cubic-bezier(0.22, 0.8, 0.24, 1)';
 const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
+export interface Typography {
+  align: 'publisher' | 'left' | 'justify';
+  hyphens: boolean;
+  letterSpacing: number;
+  paragraphGap: 'publisher' | 'none' | 'small' | 'large';
+}
+
 const FONT_STACKS: Record<EpubFont, string | null> = {
+  custom: '"ZkReaderFont", Georgia, serif',
   publisher: null,
   serif: 'Georgia, "Iowan Old Style", "Times New Roman", serif',
   sans: 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif',
 };
 
 const STYLE_ID = 'zk-reader-style';
+
+const EPUB_NS = 'http://www.idpf.org/2007/ops';
+
+/** Whether a link points to a footnote: marked as one, or looks like one (a small number or mark, often raised). */
+function isNoteRef(link: Element): boolean {
+  const type = `${link.getAttributeNS(EPUB_NS, 'type') ?? ''} ${link.getAttribute('epub:type') ?? ''} ${link.getAttribute('role') ?? ''}`;
+  if (/noteref|doc-noteref|footnote|endnote/i.test(type)) return true;
+  if (/(^|\s)(note|footnote|endnote|fn|noteref)/i.test(link.getAttribute('class') ?? '')) return true;
+  const text = (link.textContent ?? '').trim();
+  const raised = Boolean(link.closest('sup')) || Boolean(link.querySelector('sup'));
+  return /^[\[(]?\s*(\d{1,3}|[*†‡§¶]+|[a-z])\s*[\])]?$/i.test(text) && (raised || text.length <= 4);
+}
+
+/** A link's target as a path inside the book, relative to the package. */
+function resolveHref(sectionHref: string, href: string): string {
+  try {
+    const url = new URL(href, `http://book/${sectionHref}`);
+    return `${decodeURIComponent(url.pathname.slice(1))}${url.hash}`;
+  } catch {
+    return href;
+  }
+}
+
+/**
+ * The text of the note a link points to; null when the target cannot be found (the link is then
+ * followed as usual). A target that is an empty anchor stands for the paragraph it sits in.
+ */
+async function noteText(engine: EpubEngineLike, doc: Document, sectionHref: string, href: string): Promise<{ text: string; href: string } | null> {
+  const full = resolveHref(sectionHref, href);
+  const [file, id] = full.split('#');
+  if (!id) return null;
+  let target: Element | null = null;
+  try {
+    if (!file || file === sectionHref || href.startsWith('#')) target = doc.getElementById(id);
+    else {
+      const section = engine.book.spine.get(file) as unknown as { load(loader: unknown): Promise<Element> } | undefined;
+      const root = section ? await section.load(engine.book.load.bind(engine.book)) : null;
+      target = root?.querySelector(`[id="${CSS.escape(id)}"]`) ?? null;
+    }
+  } catch {
+    return null;
+  }
+  if (!target) return null;
+  let box: Element = target;
+  // An anchor, a heading or a lone number is only the start of the note: take the block around or after it.
+  while ((box.textContent ?? '').trim().length < 12 && box.parentElement && !/^(body|section)$/i.test(box.parentElement.localName)) box = box.parentElement;
+  if ((box.textContent ?? '').trim().length < 12 && box.nextElementSibling) box = box.nextElementSibling;
+  const text = (box.textContent ?? '').replace(/\s+/g, ' ').trim();
+  return text ? { text: text.length > 1500 ? `${text.slice(0, 1500)}…` : text, href: full } : null;
+}
 /**
  * Prefix that outweighs any selector a book is likely to use: an id inside :not() counts as an id.
  * The reader's choice of font must win even over a book's own `!important` rules on classes.
  */
 const STRONG = 'html:not(#zk-none)';
 
-function contentCss(p: Pick<Props, 'theme' | 'fontSize' | 'font' | 'lineHeight' | 'flow'>): string {
+function contentCss(p: Pick<Props, 'theme' | 'fontSize' | 'font' | 'lineHeight' | 'flow' | 'typography' | 'customFontUrl'>): string {
   const colors = READING_PALETTE[p.theme];
-  const font = FONT_STACKS[p.font];
+  const font = p.font === 'custom' && !p.customFontUrl ? null : FONT_STACKS[p.font];
+  const t = p.typography;
+  const gap = { publisher: null, none: '0', small: '0.5em', large: '1em' }[t.paragraphGap];
   return `
+    ${p.font === 'custom' && p.customFontUrl ? `@font-face { font-family: "ZkReaderFont"; src: url("${p.customFontUrl}"); font-display: swap; }` : ''}
+    ${t.align !== 'publisher' ? `${STRONG} body :is(p, li, blockquote, dd, div) { text-align: ${t.align === 'justify' ? 'justify' : 'start'} !important; }` : ''}
+    ${t.hyphens ? `${STRONG} body, ${STRONG} body * { hyphens: auto !important; -webkit-hyphens: auto !important; }` : ''}
+    ${t.letterSpacing ? `${STRONG} body { letter-spacing: ${t.letterSpacing}em !important; word-spacing: ${t.letterSpacing * 2}em !important; }` : ''}
+    ${gap !== null ? `${STRONG} body p { margin-top: 0 !important; margin-bottom: ${gap} !important; }` : ''}
     /* The frame must share the app's colour scheme, or the browser paints an opaque white canvas behind it. */
     :root { color-scheme: ${p.theme === 'dark' ? 'dark' : 'light'}; }
     /* Pages are turned by the reader itself; the browser must not pan, zoom or flash a tap highlight here. */
@@ -169,8 +242,8 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       width: host.clientWidth,
       height: host.clientHeight,
       flow: flow === 'paginated' ? 'paginated' : 'scrolled-doc',
-      spread: 'auto',
-      minSpreadWidth: 1100,
+      spread: propsRef.current.spread ? 'auto' : 'none',
+      minSpreadWidth: 760,
       // Safari delivers no events — no touches, taps or keys — from a frame that may not run scripts.
       // The book's own scripts stay switched off by the policy the engine puts into every chapter.
       allowScriptedContent: true,
@@ -287,6 +360,25 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       doc.head.append(style);
 
       doc.addEventListener('keydown', (e) => propsRef.current.onKey(e));
+
+      // A link to a footnote: shown in a popup instead of taking the reader away from the page.
+      doc.addEventListener(
+        'click',
+        (e) => {
+          const link = (e.target as Element | null)?.closest?.('a[href]');
+          if (!link || !propsRef.current.onFootnote || !isNoteRef(link)) return;
+          const href = link.getAttribute('href') ?? '';
+          if (!href.includes('#')) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const sectionHref = (contents as unknown as { section?: { href?: string } }).section?.href ?? engine.book.spine.get(contents.sectionIndex)?.href ?? '';
+          void noteText(engine, doc, sectionHref, href).then((note) => {
+            if (note) propsRef.current.onFootnote?.(note);
+            else display(note === null ? resolveHref(sectionHref, href) : undefined);
+          });
+        },
+        true,
+      );
 
       doc.addEventListener('selectionchange', () => {
         const sel = doc.getSelection();
@@ -510,7 +602,7 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
   useEffect(() => {
     const rendition = renditionRef.current;
     if (!rendition) return;
-    const css = contentCss({ theme, fontSize, font, lineHeight, flow });
+    const css = contentCss({ theme, fontSize, font, lineHeight, flow, typography: props.typography, customFontUrl: props.customFontUrl });
     let changed = false;
     for (const contents of rendition.getContents() as unknown as Contents[]) {
       const style = contents.document.getElementById(STYLE_ID);
@@ -537,7 +629,13 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
     return () => timers.forEach(clearTimeout);
     // `flow` only feeds the stylesheet text: a change of flow rebuilds the whole view anyway.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theme, fontSize, font, lineHeight]);
+  }, [theme, fontSize, font, lineHeight, props.typography.align, props.typography.hyphens, props.typography.letterSpacing, props.typography.paragraphGap, props.customFontUrl]);
+
+  // ---- Two pages side by side ----
+  useEffect(() => {
+    const rendition = renditionRef.current as unknown as { spread?(kind: string, min?: number): void } | null;
+    rendition?.spread?.(props.spread ? 'auto' : 'none', 760);
+  }, [props.spread]);
 
   // ---- Highlights and notes ----
   useEffect(() => {

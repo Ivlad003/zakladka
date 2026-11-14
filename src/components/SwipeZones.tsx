@@ -10,6 +10,8 @@ interface Props {
   onTap(zone: TapZone): void;
   /** Where the reader is, shown in the bar. */
   label: string;
+  /** A second, quieter line: the time left. */
+  hint?: string;
   /** 0..1, drawn as a line along the top of the bar. */
   progress: number;
 }
@@ -76,7 +78,7 @@ function useZone(ref: React.RefObject<HTMLElement | null>, handlers: React.RefOb
  * arrive — also in browsers that keep gestures on the book's page to themselves. The bar doubles
  * as a status line: where the reader is in the book.
  */
-export function SwipeZones({ onDrag, onRelease, onTap, label, progress }: Props) {
+export function SwipeZones({ onDrag, onRelease, onTap, label, hint, progress }: Props) {
   const barRef = useRef<HTMLDivElement>(null);
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -110,7 +112,10 @@ export function SwipeZones({ onDrag, onRelease, onTap, label, progress }: Props)
           <div style={{ width: `${Math.round(progress * 1000) / 10}%` }} />
         </div>
         <ChevronLeft size={18} />
-        <span className="swipe-bar-label">{label}</span>
+        <span className={hint ? 'swipe-bar-label two-lines' : 'swipe-bar-label'}>
+          <span>{label}</span>
+          {hint && <small>{hint}</small>}
+        </span>
         <ChevronRight size={18} />
       </div>
     </>

@@ -34,6 +34,8 @@ interface Props {
   swipe: boolean;
   /** Whether a sideways swipe with two fingers turns the page. */
   swipe2: boolean;
+  /** Two pages side by side (in the continuous layout): the first page alone, as a cover, then pairs. */
+  spread?: boolean;
   zoom: ZoomMode;
   annotations: Annotation[];
   ink: Map<number, Stroke[]>;
@@ -345,6 +347,8 @@ interface Layout {
   scale: number;
   pad: number;
   tops: number[];
+  /** Left edge of each page. */
+  lefts: number[];
   total: number;
   contentWidth: number;
 }
@@ -374,19 +378,37 @@ const Scroller = forwardRef<FixedViewApi, Props>(function Scroller(props, ref) {
       if (s.width > maxW) maxW = s.width;
       if (s.height > maxH) maxH = s.height;
     }
-    const fitWidth = (viewport.w - 2 * pad) / maxW;
+    const cols = props.spread && sizes.length > 1 && viewport.w >= 760 ? 2 : 1;
+    const fitWidth = (viewport.w - 2 * pad - (cols - 1) * gap) / (maxW * cols);
     const raw = typeof zoom === 'number' ? zoom : zoom === 'fit-width' ? fitWidth : Math.min(fitWidth, (viewport.h - 2 * pad) / maxH);
     const scale = clamp(raw, 0.1, 8);
+    const contentWidth = Math.max(viewport.w, maxW * scale * cols + (cols - 1) * gap + 2 * pad);
+    const middle = contentWidth / 2;
     const tops = new Array<number>(sizes.length);
+    const lefts = new Array<number>(sizes.length);
     let y = pad;
-    for (let i = 0; i < sizes.length; i++) {
-      tops[i] = y;
-      y += sizes[i].height * scale + gap;
+    for (let i = 0; i < sizes.length; ) {
+      // Book-like spreads: the first page alone on the right, then even–odd pairs.
+      const pair = cols === 2 && i > 0 && i + 1 < sizes.length;
+      const w = sizes[i].width * scale;
+      if (pair) {
+        const w2 = sizes[i + 1].width * scale;
+        tops[i] = tops[i + 1] = y;
+        lefts[i] = middle - gap / 2 - w;
+        lefts[i + 1] = middle + gap / 2;
+        y += Math.max(sizes[i].height, sizes[i + 1].height) * scale + gap;
+        i += 2;
+      } else {
+        tops[i] = y;
+        lefts[i] = cols === 2 && i === 0 ? middle + gap / 2 : (contentWidth - w) / 2;
+        y += sizes[i].height * scale + gap;
+        i += 1;
+      }
     }
-    return { scale, pad, tops, total: y - gap + pad, contentWidth: Math.max(viewport.w, maxW * scale + 2 * pad) };
+    return { scale, pad, tops, lefts, total: y - gap + pad, contentWidth };
     // sizesVersion: page sizes are mutated in place by the engine.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, viewport.w, viewport.h, zoom, sizesVersion]);
+  }, [engine, viewport.w, viewport.h, zoom, sizesVersion, props.spread]);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const prevLayoutRef = useRef<Layout | null>(null);
@@ -452,9 +474,9 @@ const Scroller = forwardRef<FixedViewApi, Props>(function Scroller(props, ref) {
       const y = scrollPosRef.current.y + focal.y;
       const page = findPage(prev.tops, y);
       const size = engine.pageSizes[page];
-      const px = (scrollPosRef.current.x + focal.x - (prev.contentWidth - size.width * prev.scale) / 2) / prev.scale;
+      const px = (scrollPosRef.current.x + focal.x - prev.lefts[page]) / prev.scale;
       const py = (y - prev.tops[page]) / prev.scale;
-      el.scrollLeft = (layout.contentWidth - size.width * layout.scale) / 2 + px * layout.scale - focal.x;
+      el.scrollLeft = layout.lefts[page] + px * layout.scale - focal.x;
       el.scrollTop = layout.tops[page] + py * layout.scale - focal.y;
     } else {
       const { page, frac } = anchorRef.current;
@@ -542,7 +564,7 @@ const Scroller = forwardRef<FixedViewApi, Props>(function Scroller(props, ref) {
           engine={engine}
           index={i}
           top={layout.tops[i]}
-          left={(layout.contentWidth - width) / 2}
+          left={layout.lefts[i]}
           width={width}
           height={size.height * layout.scale}
           scale={layout.scale}

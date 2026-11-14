@@ -62,7 +62,7 @@ interface BookState {
   deletedAnnotations: Record<string, number>;
   ink: InkPage[];
   /** Title, author and shelves as the reader edited them; absent until they do. */
-  info?: { title: string; author: string; tags: string[]; at: number };
+  info?: { title: string; author: string; tags: string[]; at: number; finishedAt?: number };
 }
 
 interface RemoteOcr {
@@ -166,7 +166,7 @@ async function readLocalState(bookId: string): Promise<{ state: BookState; diges
       annotations,
       deletedAnnotations,
       ink,
-      ...(book.infoAt ? { info: { title: book.title, author: book.author, tags: book.tags ?? [], at: book.infoAt } } : {}),
+      ...(book.infoAt ? { info: { title: book.title, author: book.author, tags: book.tags ?? [], at: book.infoAt, finishedAt: book.finishedAt ?? 0 } } : {}),
     };
     return { state, digest: digestOf(state) };
   });
@@ -227,6 +227,7 @@ async function applyRemoteState(bookId: string, remote: BookState): Promise<void
       patch.author = info.author;
       patch.tags = info.tags;
       patch.infoAt = info.at;
+      if (info.finishedAt !== undefined) patch.finishedAt = info.finishedAt;
     }
     if (Object.keys(patch).length) await db.books.update(bookId, patch);
   });

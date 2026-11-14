@@ -158,7 +158,7 @@ const num = (min: number, max: number) => z.preprocess(numeric, z.number().min(m
 const SETTABLE: Record<string, z.ZodType> = {
   theme: z.enum(['light', 'sepia', 'dark']),
   epubFontSize: num(70, 220),
-  epubFont: z.enum(['publisher', 'serif', 'sans']),
+  epubFont: z.enum(['publisher', 'serif', 'sans', 'custom']),
   epubLineHeight: num(1.1, 2.4),
   epubFlow: z.enum(['paginated', 'scrolled']),
   fixedFlow: z.enum(['paged', 'scrolled']),

@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpen, Brain, Cloud, CloudDownload, Download, LoaderCircle, Moon, Palette, Pencil, Plus, RefreshCw, Search, Settings, Sparkles, Sun, Trash2, Upload, X } from 'lucide-react';
+import { BookOpen, Brain, Cloud, CloudDownload, Download, Flame, LoaderCircle, Moon, Palette, Pencil, Plus, RefreshCw, Search, Settings, Sparkles, Sun, Trash2, Upload, X } from 'lucide-react';
 import { db, deleteBook } from '../db';
 import { LIBRARY_CHAT } from '../lib/chats';
+import { durationLabel, lastDays, streaks, useReadingLog } from '../lib/stats';
 import { takeJump } from '../lib/jump';
 import { importBooks } from '../lib/library';
 import { autoSync, isBookInStorage, removeLocalCopy, syncConfig, useSyncStatus } from '../lib/sync';
@@ -11,6 +12,8 @@ import { updateSettings, useSettings, type LibrarySort, type Theme } from '../se
 import type { BookRecord } from '../types';
 import { AiSettings } from './AiSettings';
 import { BookInfoDialog } from './BookInfoDialog';
+import { AddSheet } from './AddSheet';
+import { findUrl } from '../lib/articles';
 import { forgetSearch, LibrarySearch, searchWasOpen } from './LibrarySearch';
 import { SyncDialog } from './SyncDialog';
 
@@ -69,6 +72,14 @@ export function Library({ onOpen, onInstall }: Props) {
   /** A book that is also in the sync storage: removing it needs a choice of where from. */
   const [removing, setRemoving] = useState<BookRecord | null>(null);
   const [editing, setEditing] = useState<BookRecord | null>(null);
+  // "Add": files or a web article; a link shared from another app opens it with the address filled in.
+  const [adding, setAdding] = useState<{ url: string | null } | null>(() => {
+    const params = new URLSearchParams(location.search);
+    const shared = findUrl(`${params.get('url') ?? ''} ${params.get('text') ?? ''} ${params.get('title') ?? ''}`);
+    if (!shared) return null;
+    history.replaceState(null, '', location.pathname + location.hash);
+    return { url: shared };
+  });
   /** The shelf being looked at; null shows every book. */
   const [shelf, setShelf] = useState<string | null>(null);
   const sync = useSyncStatus();
@@ -88,6 +99,13 @@ export function Library({ onOpen, onInstall }: Props) {
   }, [books]);
   // A shelf that has just lost its last book is no longer there to look at.
   const onShelf = shelf === NO_SHELF || shelves.list.some(([name]) => name === shelf) ? shelf : null;
+
+  const log = useReadingLog();
+  const reading = useMemo(() => {
+    if (!log?.length) return null;
+    const today = lastDays(log, 1)[0];
+    return { today: today.seconds, streak: streaks(log).current };
+  }, [log]);
 
   const shown = useMemo(() => {
     const q = filter.trim().toLocaleLowerCase();
@@ -141,7 +159,7 @@ export function Library({ onOpen, onInstall }: Props) {
     <div
       className={cx('library', dragging && 'dragging')}
       onDragEnter={(e) => {
-        if (!e.dataTransfer.types.includes('Files')) return;
+        if (!e.dataTransfer.types.includes('Files') && !e.dataTransfer.types.includes('text/uri-list')) return;
         dragDepth.current++;
         setDragging(true);
       }}
@@ -154,6 +172,9 @@ export function Library({ onOpen, onInstall }: Props) {
         e.preventDefault();
         dragDepth.current = 0;
         setDragging(false);
+        // A link dragged from a browser is an article to save.
+        const link = !e.dataTransfer.files.length ? findUrl(e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')) : null;
+        if (link) return setAdding({ url: link });
         void add(Array.from(e.dataTransfer.files));
       }}
     >
@@ -214,7 +235,7 @@ export function Library({ onOpen, onInstall }: Props) {
         <button className="icon-btn" onClick={() => setAiSettings(true)} title="Налаштування AI">
           <Settings size={18} />
         </button>
-        <button className="btn primary add-book" onClick={() => fileRef.current?.click()} disabled={importing > 0} title="Додати книгу" aria-label="Додати книгу">
+        <button className="btn primary add-book" onClick={() => setAdding({ url: null })} disabled={importing > 0} title="Додати книгу або статтю" aria-label="Додати книгу або статтю">
           {importing > 0 ? <LoaderCircle size={16} className="spin" /> : <Plus size={16} />}
           <span className="hide-narrow">Додати книгу</span>
         </button>
@@ -264,6 +285,10 @@ export function Library({ onOpen, onInstall }: Props) {
         ) : (
           <>
             <div className="library-tools">
+              <button className="chip stats-chip" onClick={() => (location.hash = '#/stats')} title="Статистика читання">
+                <Flame size={14} />
+                {reading ? `${reading.streak} дн. · сьогодні ${reading.today ? durationLabel(reading.today) : '0 хв'}` : 'Статистика'}
+              </button>
               <div className="shelf-chips" role="tablist" aria-label="Полиці">
                 <button role="tab" aria-selected={onShelf === null} className={cx('chip', onShelf === null && 'active')} onClick={() => setShelf(null)}>
                   Усі · {books?.length ?? 0}
@@ -323,6 +348,20 @@ export function Library({ onOpen, onInstall }: Props) {
       {aiSettings && <AiSettings onClose={() => setAiSettings(false)} />}
       {syncDialog && <SyncDialog onClose={() => setSyncDialog(false)} />}
       {removing && <RemoveDialog book={removing} onClose={() => setRemoving(null)} />}
+      {adding && (
+        <AddSheet
+          initialUrl={adding.url}
+          onPickFiles={() => {
+            setAdding(null);
+            fileRef.current?.click();
+          }}
+          onSaved={(id) => {
+            setAdding(null);
+            onOpen(id);
+          }}
+          onClose={() => setAdding(null)}
+        />
+      )}
       {editing && <BookInfoDialog book={editing} shelves={shelves.list.map(([name]) => name)} onClose={() => setEditing(null)} />}
     </div>
   );

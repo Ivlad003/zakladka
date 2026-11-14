@@ -22,6 +22,8 @@ import {
   Minimize,
   Pencil,
   ScanText,
+  Users,
+  ImageIcon,
   Search,
   Sparkles,
   StickyNote,
@@ -40,6 +42,7 @@ import type { Engine } from '../engines/types';
 import { quickFill } from '../ai/quick';
 import { isTouchDevice, useMediaQuery, type TapZone } from '../lib/gestures';
 import { takeJump } from '../lib/jump';
+import { durationLabel, paceOf, startTracking, useReadingLog, type Tracker } from '../lib/stats';
 import type { AloudSource } from '../lib/read-aloud';
 import { exportNotesMarkdown, sortAnnotations } from '../lib/notes';
 import { clearOcr, runOcr, type OcrProgress } from '../lib/ocr';
@@ -54,6 +57,11 @@ import { EpubView, type EpubPosition, type EpubViewApi } from './EpubView';
 import { NoteEditor } from './NoteEditor';
 import { OcrDialog } from './OcrDialog';
 import { ReadAloudBar } from './ReadAloudBar';
+import { DictionaryCard } from './DictionaryCard';
+import { isWord } from '../lib/dictionary';
+
+const XrayPanel = lazy(() => import('./XrayPanel').then((m) => ({ default: m.XrayPanel })));
+const QuoteCard = lazy(() => import('./QuoteCard').then((m) => ({ default: m.QuoteCard })));
 import { PagedView, type FixedViewApi } from './PagedView';
 import { ColorDots, Popup } from './Popup';
 import { AiSettings } from './AiSettings';
@@ -112,6 +120,8 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   const [reflowKey, setReflowKey] = useState(0);
   const [reflowProgress, setReflowProgress] = useState<ReflowProgress | null>(null);
   const [readerNotice, setReaderNotice] = useState<string | null>(null);
+  // Reading time and pages for the statistics.
+  const trackerRef = useRef<Tracker | null>(null);
   // A table of contents made from the text, for a PDF/DjVu book without one.
   const [madeToc, setMadeToc] = useState<Omit<MadeTocState, 'onBuild'> | null>(null);
   const madeTocAbortRef = useRef<AbortController | null>(null);
@@ -119,12 +129,44 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   const [scale, setScale] = useState(1);
 
   const [side, setSide] = useState<SideTab | null>(null);
+  // X-Ray (names in the book), opened on its own or on a name from the dictionary card.
+  const [xray, setXray] = useState<{ term: string | null } | null>(null);
+  const xrayNames = useLiveQuery(async () => new Map(((await db.xray.get(bookId))?.terms ?? []).map((t) => [t.name.toLocaleLowerCase(), t.count])), [bookId]);
+  // A quote being turned into a picture.
+  const [quoteCard, setQuoteCard] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [viewMenu, setViewMenu] = useState(false);
   const [aiSettings, setAiSettings] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   // Phone layout: the bars lie over the page and get out of the way while reading.
   const mobile = useMediaQuery(NARROW);
+  // Two pages side by side: on a wide screen, or also on a tablet held sideways when asked for.
+  const wideScreen = useMediaQuery('(min-width: 1100px)');
+  const landscapeTablet = useMediaQuery('(orientation: landscape) and (min-width: 700px)');
+  const spreadWanted = settings.spread === 'off' ? false : settings.spread === 'landscape' ? wideScreen || landscapeTablet : wideScreen;
+  // The reader's own font, from the database.
+  const [customFontUrl, setCustomFontUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (settings.epubFont !== 'custom') return setCustomFontUrl(undefined);
+    let url: string | undefined;
+    let alive = true;
+    void db.assets.get('font').then((asset) => {
+      if (!alive || !asset) return;
+      url = URL.createObjectURL(asset.data);
+      setCustomFontUrl(url);
+    });
+    return () => {
+      alive = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [settings.epubFont, settings.epubCustomFontName]);
+  const typography = useMemo(
+    () => ({ align: settings.epubAlign, hyphens: settings.epubHyphens, letterSpacing: settings.epubLetterSpacing, paragraphGap: settings.epubParagraphGap }),
+    [settings.epubAlign, settings.epubHyphens, settings.epubLetterSpacing, settings.epubParagraphGap],
+  );
+  // A footnote opened from the text.
+  const [footnote, setFootnote] = useState<{ text: string; href: string } | null>(null);
+  const readingLog = useReadingLog();
   const [bars, setBars] = useState(true);
   const [moreMenu, setMoreMenu] = useState(false);
   const [aloudBar, setAloudBar] = useState(false);
@@ -327,6 +369,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     (page: number) => {
       setUnit(page);
       savePosition(String(page), unitCount > 1 ? page / (unitCount - 1) : 1);
+      trackerRef.current?.moved(unitCount > 1 ? page / (unitCount - 1) : 1);
     },
     [savePosition, unitCount],
   );
@@ -340,6 +383,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
       // In the text mode a section is a page, and the page number is what is kept.
       if (reflowRef.current) savePosition(String(pos.unit), unitCount > 1 ? pos.unit / (unitCount - 1) : 1);
       else savePosition(pos.cfi, pos.percent);
+      trackerRef.current?.moved(reflowRef.current ? (unitCount > 1 ? pos.unit / (unitCount - 1) : 1) : pos.percent);
     },
     [savePosition, unitCount],
   );
@@ -699,6 +743,26 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
 
+  // ---- Statistics: counted while the book is open ----
+  useEffect(() => {
+    if (!engine) return;
+    const tracker = startTracking(bookId);
+    trackerRef.current = tracker;
+    const activity = () => tracker.activity();
+    window.addEventListener('pointerdown', activity, true);
+    window.addEventListener('keydown', activity, true);
+    window.addEventListener('wheel', activity, { capture: true, passive: true });
+    window.addEventListener('touchmove', activity, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', activity, true);
+      window.removeEventListener('keydown', activity, true);
+      window.removeEventListener('wheel', activity, { capture: true });
+      window.removeEventListener('touchmove', activity, { capture: true });
+      tracker.stop();
+      if (trackerRef.current === tracker) trackerRef.current = null;
+    };
+  }, [engine, bookId]);
+
   // ---- Contents made from the text ----
   const madeTocRef = useRef(madeToc);
   madeTocRef.current = madeToc;
@@ -980,11 +1044,25 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   const isFixed = engine.kind === 'fixed';
   /** Pages are what the reader moves through: a PDF/DjVu book, in either mode. */
   const byPage = isFixed || reflow;
-  const progress = byPage
+  // ---- Time left, from the reader's own pace ----
+  const pace = paceOf(readingLog ?? [], bookId);
+  const nextChapter = flatToc.find((entry) => entry.unit > unit)?.unit;
+  const pagesLeftInChapter = !byPage
+    ? epubPos && settings.epubFlow === 'paginated'
+      ? Math.max(0, epubPos.chapterPages - epubPos.chapterPage)
+      : null
+    : (nextChapter ?? unitCount) - unit - (nextChapter === undefined ? 1 : 0);
+  const progressNow = byPage
     ? unitCount > 1
       ? unit / (unitCount - 1)
       : 1
     : ((locationsReady && epubPos ? engine.percentageFromCfi(epubPos.cfi) : null) ?? epubPos?.percent ?? book.progress);
+  const progress = progressNow;
+  const chapterSeconds = pace.secondsPerPage && pagesLeftInChapter !== null ? pagesLeftInChapter * pace.secondsPerPage : null;
+  const bookSeconds = pace.progressPerSecond ? (1 - progress) / pace.progressPerSecond : byPage && pace.secondsPerPage ? (unitCount - 1 - unit) * pace.secondsPerPage : null;
+  const chapterLeft =
+    chapterSeconds !== null ? `≈${durationLabel(chapterSeconds)} до кінця розділу` : pagesLeftInChapter ? `ще ${pagesLeftInChapter} стор. у розділі` : null;
+  const bookLeft = bookSeconds && bookSeconds > 60 ? `≈${durationLabel(bookSeconds)} до кінця книги` : null;
   const popupAnnotation = annotationPopup ? annotations.find((a) => a.id === annotationPopup.id) : undefined;
   const toggleSide = (tab: SideTab) => setSide((s) => (s === tab ? null : tab));
 
@@ -1025,7 +1103,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   const viewApi = () => fixedRef.current ?? epubRef.current;
 
   return (
-    <div className={cx('reader', settings.invertInDark && 'invert-pages', mobile && 'mobile', overlay && 'overlay-bars', overlay && !bars && 'bars-hidden', swipeZone && 'with-swipe-bar')}>
+    <div className={cx('reader', settings.invertInDark && 'invert-pages', mobile && 'mobile', overlay && 'overlay-bars', overlay && !bars && 'bars-hidden', swipeZone && 'with-swipe-bar', engine.kind === 'epub' && `margins-${settings.epubMargins}`)}>
       {!(mobile && draw) && (
         <header className="reader-bar" onPointerDownCapture={() => (barsTouchedRef.current = true)}>
           <button className="icon-btn" onClick={onExit} title="До бібліотеки">
@@ -1048,6 +1126,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               {bookmarkButton}
               <ToolButton icon={MessageSquarePlus} label="Нотатка до цього місця" onClick={addPageNote} />
               <ToolButton icon={Brain} label="Навчання: картки й повторення за цією книгою" onClick={openStudy} />
+              <ToolButton icon={Users} label="X-Ray: імена й назви в книзі" active={Boolean(xray)} onClick={() => setXray(xray ? null : { term: null })} />
               <ToolButton icon={Volume2} label="Читати вголос" active={aloudBar} onClick={() => setAloudBar((on) => !on)} />
               {isFixed && <ToolButton icon={Pencil} label="Малювати на сторінці" active={Boolean(draw)} onClick={toggleDraw} />}
               {ocrEngine && <ToolButton icon={ScanText} label="Розпізнати текст скану (OCR)" active={ocrJob.running} onClick={() => setOcrOpen(true)} />}
@@ -1091,6 +1170,24 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
       )}
 
       <div className="reader-body">
+        {xray && !side && (
+          <Suspense fallback={null}>
+            <XrayPanel
+              bookId={bookId}
+              engine={engine}
+              unit={unit}
+              unitLabel={positionLabel}
+              initialTerm={xray.term}
+              onGo={(u) => {
+                goToUnit(u);
+                closeSideOnNarrow();
+                if (isNarrow()) setXray(null);
+              }}
+              describe={agentCtx && settings.aiProvider ? (task, passages) => quickFill(agentCtx, task, passages) : undefined}
+              onClose={() => setXray(null)}
+            />
+          </Suspense>
+        )}
         {side && (
           <SidePanel
             tab={side}
@@ -1135,6 +1232,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               flow={settings.fixedFlow}
               swipe={settings.turnSwipe}
               swipe2={settings.turnSwipe2}
+              spread={spreadWanted}
               zoom={settings.fixedZoom}
               annotations={annotations}
               ink={ink}
@@ -1163,6 +1261,10 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               flow={settings.epubFlow}
               swipe={settings.turnSwipe}
               swipe2={settings.turnSwipe2}
+              typography={typography}
+              customFontUrl={customFontUrl}
+              spread={spreadWanted}
+              onFootnote={setFootnote}
               annotations={annotations}
               activeHit={activeHit}
               onRelocated={onRelocated}
@@ -1226,6 +1328,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               />
               <span className="muted">/ {unitCount}</span>
             </form>
+            {(chapterLeft || bookLeft) && <span className="muted time-left">{[chapterLeft, bookLeft].filter(Boolean).join(' · ')}</span>}
             <input
               className="seek"
               type="range"
@@ -1246,6 +1349,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
                   · {epubPos.chapterPage}/{epubPos.chapterPages}
                 </span>
               )}
+              {(chapterLeft || bookLeft) && <span className="muted time-left"> · {[chapterLeft, bookLeft].filter(Boolean).join(' · ')}</span>}
             </span>
             <input
               className="seek"
@@ -1286,6 +1390,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
           }}
           onTap={onTap}
           label={byPage ? `стор. ${unit + 1} / ${unitCount}` : `${truncate(chapterTitle(unit) ?? `Розділ ${unit + 1}`, 28)} · ${Math.round(progress * 100)}%`}
+          hint={chapterLeft ?? bookLeft ?? undefined}
           progress={progress}
         />
       )}
@@ -1331,6 +1436,15 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               onClick={() => {
                 setMoreMenu(false);
                 openStudy();
+              }}
+            />
+            <SheetItem
+              icon={Users}
+              label="X-Ray: імена й назви"
+              onClick={() => {
+                setMoreMenu(false);
+                setSide(null);
+                setXray({ term: null });
               }}
             />
             <SheetItem
@@ -1386,6 +1500,32 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
         </div>
       )}
 
+      {quoteCard && book && (
+        <Suspense fallback={null}>
+          <QuoteCard text={quoteCard} title={book.title} author={book.author} onClose={() => setQuoteCard(null)} />
+        </Suspense>
+      )}
+      {footnote && (
+        <div className="modal-backdrop footnote-backdrop" onPointerDown={(e) => e.target === e.currentTarget && setFootnote(null)}>
+          <div className="footnote-sheet" role="dialog" aria-label="Примітка">
+            <p>{footnote.text}</p>
+            <div className="footnote-actions">
+              <button
+                className="btn small"
+                onClick={() => {
+                  epubRef.current?.goToHref(footnote.href);
+                  setFootnote(null);
+                }}
+              >
+                Перейти до примітки
+              </button>
+              <button className="btn small primary" onClick={() => setFootnote(null)}>
+                Закрити
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {readerNotice && !remotePosition && (
         <div className="reader-toast" role="status">
           <span>{readerNotice}</span>
@@ -1411,6 +1551,17 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
 
       {selection && !draw && !editing && touchUi && (
         <div className="action-bar" role="toolbar" aria-label="Дії з виділеним текстом" onMouseDown={(e) => e.preventDefault()}>
+          {isWord(selection.text) && (
+            <DictionaryCard
+              word={selection.text.trim()}
+              onAskAi={() => askAi('explainer', `Що означає слово «${selection.text.trim()}» у цьому місці книги? Коротко.`, selection.text)}
+              xrayCount={xrayNames?.get(selection.text.trim().toLocaleLowerCase())}
+              onXray={() => {
+                setXray({ term: selection.text.trim() });
+                clearSelection();
+              }}
+            />
+          )}
           <div className="action-bar-top">
             <ColorDots onPick={(c) => void highlightSelection(c)} />
             <span className="action-quote">«{truncate(selection.text.replace(/\s+/g, ' '), 70)}»</span>
@@ -1439,6 +1590,14 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
             <TabButton icon={BookOpenCheck} label="Пояснити" onClick={() => askAi('explainer', 'Поясни цей фрагмент.', selection.text)} />
             <TabButton icon={Languages} label="Переклад" onClick={() => askAi('translator', 'Переклади цей фрагмент.', selection.text)} />
             <TabButton icon={MessageSquare} label="Запитати" onClick={() => attachToAi(selection.text)} />
+            <TabButton
+              icon={ImageIcon}
+              label="Картинка"
+              onClick={() => {
+                setQuoteCard(selection.text);
+                clearSelection();
+              }}
+            />
           </div>
         </div>
       )}
@@ -1461,6 +1620,27 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
           <PopupButton icon={BookOpenCheck} label="Пояснити" onClick={() => askAi('explainer', 'Поясни цей фрагмент.', selection.text)} />
           <PopupButton icon={Languages} label="Перекласти" onClick={() => askAi('translator', 'Переклади цей фрагмент.', selection.text)} />
           <PopupButton icon={MessageSquare} label="Запитати AI" onClick={() => attachToAi(selection.text)} />
+          <PopupButton
+            icon={ImageIcon}
+            label="Цитата як картинка"
+            onClick={() => {
+              setQuoteCard(selection.text);
+              clearSelection();
+            }}
+          />
+          {isWord(selection.text) && (
+            <div className="popup-dictionary">
+              <DictionaryCard
+                word={selection.text.trim()}
+                onAskAi={() => askAi('explainer', `Що означає слово «${selection.text.trim()}» у цьому місці книги? Коротко.`, selection.text)}
+                xrayCount={xrayNames?.get(selection.text.trim().toLocaleLowerCase())}
+                onXray={() => {
+                  setXray({ term: selection.text.trim() });
+                  clearSelection();
+                }}
+              />
+            </div>
+          )}
         </Popup>
       )}
 

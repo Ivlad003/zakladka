@@ -11,7 +11,7 @@
 //                           the reader); entries are never edited, so two copies merge as a union
 import type { Table } from 'dexie';
 import { db } from '../db';
-import type { MemoryPalace, ReviewLog, StudyCard, StudyTopic } from '../types';
+import type { MemoryPalace, ReadingDay, ReviewLog, StudyCard, StudyTopic } from '../types';
 import { fingerprint } from './hash';
 import type { S3Store } from './s3';
 
@@ -138,12 +138,51 @@ async function syncReviews(store: S3Store, step: (text: string) => void): Promis
   return incoming.length;
 }
 
+/**
+ * The reading log behind the statistics: one row per day, book and device, each written only by its
+ * own device, so the newer copy of a row wins and nothing is counted twice.
+ */
+async function syncReadingLog(store: S3Store): Promise<number> {
+  const KEY = 'v1/reading.json';
+  const STATE = 'zakladka:readingSync';
+  const local = await db.readingLog.toArray();
+  const digest = (rows: ReadingDay[]) => fingerprint(rows.map((r) => `${r.id}:${r.updatedAt}`).sort().join('\n'));
+  const version = await store.getJson<{ at: number }>(`${KEY}.version`);
+  let known = { at: -1, digest: '' };
+  try {
+    known = { ...known, ...JSON.parse(localStorage.getItem(STATE) ?? '{}') };
+  } catch {
+    // Compared in full.
+  }
+  const mine = digest(local);
+  if ((version?.at ?? 0) === known.at && mine === known.digest) return 0;
+  const remote = version ? ((await store.getJson<{ days: ReadingDay[] }>(KEY))?.days ?? []) : [];
+  const byId = new Map(local.map((r) => [r.id, r]));
+  const incoming = remote.filter((r) => (byId.get(r.id)?.updatedAt ?? 0) < r.updatedAt);
+  if (incoming.length) await db.readingLog.bulkPut(incoming);
+  for (const r of incoming) byId.set(r.id, r);
+  const merged = [...byId.values()];
+  let at = version?.at ?? 0;
+  if (digest(merged) !== digest(remote)) {
+    at = Math.max(Date.now(), at + 1);
+    await store.putJson(KEY, { version: 1, days: merged });
+    await store.putJson(`${KEY}.version`, { at });
+  }
+  try {
+    localStorage.setItem(STATE, JSON.stringify({ at, digest: digest(merged) }));
+  } catch {
+    // Compared in full next time.
+  }
+  return incoming.length;
+}
+
 /** One round of study sync. Returns how many local items changed and whether anything was uploaded. */
 export async function syncStudy(store: S3Store, step: (text: string) => void): Promise<{ pulled: number; pushed: boolean }> {
   const result = await syncItems(store, step);
   // After the cards, so that answers to cards deleted elsewhere are not brought back.
   const reviews = await syncReviews(store, step);
-  return { pulled: result.pulled + reviews, pushed: result.pushed };
+  const reading = await syncReadingLog(store);
+  return { pulled: result.pulled + reviews + reading, pushed: result.pushed };
 }
 
 async function syncItems(store: S3Store, step: (text: string) => void): Promise<{ pulled: number; pushed: boolean }> {

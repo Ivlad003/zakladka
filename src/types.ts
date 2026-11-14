@@ -24,6 +24,10 @@ export interface BookRecord {
   tags?: string[];
   /** PDF/DjVu shown in the text mode (laid out like an EPUB) on this device. */
   reflow?: boolean;
+  /** When the book was read to the end (0 or absent: not yet); counts towards the year's goal. */
+  finishedAt?: number;
+  /** A web article saved to read later: where it came from. */
+  sourceUrl?: string;
   /** When the reader last edited the title, author or shelves; the newer edit wins when devices sync. */
   infoAt?: number;
   /** Cached epub.js locations (JSON), so percentages are available instantly on reopen. */
@@ -289,6 +293,38 @@ export interface ReviewLog {
   rating: 1 | 2 | 3 | 4;
   /** Days since the previous review; `null` for the first answer to a new card. */
   elapsedDays: number | null;
+}
+
+/** The X-Ray of a book (see lib/xray.ts), with the descriptions the AI gave. */
+export interface XrayRecord {
+  bookId: string;
+  version: number;
+  terms: { name: string; count: number; units: [number, number][] }[];
+  unitCount: number;
+  notes: Record<string, string>;
+  builtAt: number;
+}
+
+/** A file the reader added to the app itself (for now: their own font). */
+export interface StoredAsset {
+  id: string;
+  name: string;
+  data: Blob;
+}
+
+/** Reading done on one day, in one book, on one device (see lib/stats.ts). */
+export interface ReadingDay {
+  /** `${day}|${bookId}|${device}` */
+  id: string;
+  /** Local date, YYYY-MM-DD. */
+  day: string;
+  bookId: string;
+  device: string;
+  seconds: number;
+  pages: number;
+  /** How much of the book (0..1) was read forward. */
+  progressGain: number;
+  updatedAt: number;
 }
 
 /** A table of contents made from the text of a book that has none (see lib/auto-toc.ts). */

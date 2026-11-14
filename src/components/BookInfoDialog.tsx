@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { db } from '../db';
 import { autoSync } from '../lib/sync';
+import { markFinished } from '../lib/stats';
 import { cx } from '../lib/utils';
 import type { BookRecord } from '../types';
 
@@ -18,6 +19,7 @@ export function BookInfoDialog({ book, shelves, onClose }: Props) {
   const [author, setAuthor] = useState(book.author);
   const [tags, setTags] = useState<string[]>(book.tags ?? []);
   const [fresh, setFresh] = useState('');
+  const [finished, setFinished] = useState(Boolean(book.finishedAt));
   const known = [...new Set([...shelves, ...tags])].sort((a, b) => a.localeCompare(b, 'uk'));
 
   const toggle = (name: string) => setTags((now) => (now.includes(name) ? now.filter((t) => t !== name) : [...now, name]));
@@ -77,6 +79,21 @@ export function BookInfoDialog({ book, shelves, onClose }: Props) {
           </form>
           <small className="muted">Книга може стояти на кількох полицях. Порожня полиця зникає сама.</small>
         </div>
+        <label className="field checkbox">
+          <input type="checkbox" checked={finished} onChange={(e) => {
+            setFinished(e.target.checked);
+            void markFinished(book.id, e.target.checked).then(() => autoSync());
+          }} />
+          <span>Прочитано{finished && book.finishedAt ? ` (${new Date(book.finishedAt).toLocaleDateString('uk-UA')})` : ''}</span>
+        </label>
+        {book.sourceUrl && (
+          <small className="muted">
+            Стаття з{' '}
+            <a href={book.sourceUrl} target="_blank" rel="noreferrer">
+              {new URL(book.sourceUrl).hostname.replace(/^www\./, '')}
+            </a>
+          </small>
+        )}
         <small className="muted">
           Файл: {book.fileName} · {book.format.toUpperCase()}
         </small>

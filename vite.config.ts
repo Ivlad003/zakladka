@@ -1,11 +1,26 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
+
+/** Dev only: the web lookups of scripts/serve.mjs (search, page text, whole pages and pictures for saved articles). */
+function webLookups(): Plugin {
+  return {
+    name: 'web-lookups',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/web', (req, res) => {
+        void import(pathToFileURL(path.join(root, 'scripts', 'web.mjs')).href).then((m) =>
+          m.handleWeb(new URL(req.originalUrl ?? req.url ?? '/', 'http://localhost'), res),
+        );
+      });
+    },
+  };
+}
 
 /** Dev only: serves test books from ./dev-samples at /__samples/<file>. */
 function devSamples(): Plugin {
@@ -260,6 +275,7 @@ export default defineConfig({
     mockAnthropic(),
     mockOpenAi(),
     mockS3(),
+    webLookups(),
     VitePWA({
       // A new version waits until src/lib/update.ts switches to it — automatically, but never in
       // the middle of a job that a reload would destroy.
@@ -281,6 +297,7 @@ export default defineConfig({
           { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
           { src: 'maskable-icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
+        share_target: { action: './', method: 'GET', params: { title: 'title', text: 'text', url: 'url' } },
         file_handlers: [
           {
             action: './',

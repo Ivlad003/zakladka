@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 export type Theme = 'light' | 'sepia' | 'dark';
 export type ZoomMode = 'fit-width' | 'fit-page' | number;
-export type EpubFont = 'publisher' | 'serif' | 'sans';
+export type EpubFont = 'publisher' | 'serif' | 'sans' | 'custom';
 export type EpubFlow = 'paginated' | 'scrolled';
 /** PDF/DjVu: one page at a time (turned by swiping) or one continuous scroll. */
 export type FixedFlow = 'paged' | 'scrolled';
@@ -79,6 +79,20 @@ export interface Settings {
   voiceLang: string;
   /** Which generation of defaults the stored settings were written under (see `load`). */
   rev: number;
+  /** Typography of reflowable books (EPUB, FB2, MOBI, the text mode of PDF/DjVu). */
+  epubMargins: 'narrow' | 'normal' | 'wide';
+  epubAlign: 'publisher' | 'left' | 'justify';
+  epubHyphens: boolean;
+  /** Extra space between letters, in em. */
+  epubLetterSpacing: number;
+  epubParagraphGap: 'publisher' | 'none' | 'small' | 'large';
+  /** Name of the font the reader added (the file itself is kept in the database). */
+  epubCustomFontName: string;
+  /** Two pages side by side: on wide screens, also on landscape tablets, or never. */
+  spread: 'auto' | 'landscape' | 'off';
+  /** Statistics: books to read this year, minutes a day. */
+  yearGoal: number;
+  dailyGoal: number;
   /** Advanced: agent instructions as the reader edited them (agent id → role), the shared style, extra instructions, own agents. */
   promptRoles: Record<string, string>;
   promptStyle: string;
@@ -166,6 +180,15 @@ const defaults: Settings = {
   browserModel: '',
   voiceLang: '',
   rev: 2,
+  epubMargins: 'normal',
+  epubAlign: 'publisher',
+  epubHyphens: false,
+  epubLetterSpacing: 0,
+  epubParagraphGap: 'publisher',
+  epubCustomFontName: '',
+  spread: 'auto',
+  yearGoal: 12,
+  dailyGoal: 20,
   promptRoles: {},
   promptStyle: '',
   promptExtra: '',
