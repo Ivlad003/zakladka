@@ -248,6 +248,8 @@ function mockS3(): Plugin {
 }
 
 export default defineConfig({
+  // When this build was made: shown in the settings, so a reader can tell which version a device runs.
+  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
   // djvu-rs locates its .wasm through import.meta.url, which dependency pre-bundling would break.
   optimizeDeps: { exclude: ["djvu-rs"] },
   worker: { format: 'es' },

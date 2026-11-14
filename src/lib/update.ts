@@ -46,6 +46,27 @@ function check() {
   if (navigator.onLine) void registration?.update().catch(() => {});
 }
 
+/** When this build was made, for showing to the reader. */
+export const buildTime = (): Date => new Date(__BUILD_TIME__);
+
+/**
+ * Asked for by the reader: looks for a newer version now and, when there is one, waits for it to
+ * download. Resolves to what was found.
+ */
+export async function checkForUpdate(): Promise<'ready' | 'latest' | 'offline' | 'unsupported'> {
+  if (!registration) return 'unsupported';
+  if (!navigator.onLine) return 'offline';
+  try {
+    await registration.update();
+  } catch {
+    return 'offline';
+  }
+  // A new version, if any, is now downloading; it announces itself through onNeedRefresh.
+  for (let i = 0; i < 120 && state !== 'ready' && (registration.installing || registration.waiting); i++) await new Promise((done) => setTimeout(done, 500));
+  if (state !== 'ready' && registration.waiting) setState('ready');
+  return state === 'ready' ? 'ready' : 'latest';
+}
+
 export function startAutoUpdate(): void {
   try {
     if (sessionStorage.getItem(UPDATED_FLAG)) {
@@ -61,6 +82,13 @@ export function startAutoUpdate(): void {
     immediate: true,
     onRegisteredSW(_url, r) {
       registration = r;
+      // A version downloaded earlier and never switched to (the app was closed first) counts as ready too.
+      setTimeout(() => {
+        if (state === 'none' && r?.waiting && navigator.serviceWorker.controller) {
+          setState('ready');
+          applyWhenSafe();
+        }
+      }, 3000);
     },
     // The new version has been downloaded and is waiting.
     onNeedRefresh() {
