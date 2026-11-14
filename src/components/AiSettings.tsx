@@ -588,7 +588,7 @@ function LocalSection({ draft, set }: SectionProps) {
             {!models.some((m) => m.id === draft.localModel) && <option value={draft.localModel}>{draft.localModel || '— оберіть —'}</option>}
             {models.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.id}
+                {m.name}
               </option>
             ))}
           </select>

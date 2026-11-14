@@ -9,7 +9,7 @@ import { readWebPage, webSearch } from '../lib/websearch';
 import { getSettings, updateSettings, type Settings } from '../settings';
 import { listLocalModels } from './providers';
 import { blobToBase64, timeoutSignal } from '../lib/utils';
-import type { Annotation, BookRecord, TocItem } from '../types';
+import type { Annotation, BookRecord, SearchHit, TocItem } from '../types';
 
 export interface SemanticHit {
   unit: number;
@@ -109,8 +109,33 @@ function formatToc(items: TocItem[], depth = 0): string {
 
 const NO_INPUT = { type: 'object' as const, properties: {}, required: [] };
 
+/** Words too common to be worth searching for on their own (Ukrainian and English). */
+const STOP_WORDS = new Set(['який', 'яка', 'яке', 'які', 'якого', 'того', 'цього', 'цієї', 'книзі', 'книга', 'книги', 'розділі', 'розділ', 'сторінці', 'сторінка', 'було', 'буде', 'тому', 'коли', 'щоби', 'також', 'where', 'what', 'which', 'when', 'that', 'this', 'with', 'from', 'there', 'about', 'book', 'chapter', 'page']);
+
 /** Text reduced to its words: case, punctuation and line breaks do not matter when comparing a quote with the book. */
 const bare = (text: string) => text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/** Whether the question already states its own answer: every telling word of the answer is in it. */
+function givesAway(question: string, answer: string): boolean {
+  const stem = (w: string) => w.slice(0, 5);
+  const words = bare(answer).split(' ').filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
+  if (!words.length) return false;
+  const asked = new Set(bare(question).split(' ').map(stem));
+  return words.every((w) => asked.has(stem(w)));
+}
+
+/**
+ * Whether a card's answer can be read from its quote: at least one of the answer's words (by its
+ * first five letters, so that other grammatical forms count) is among the quote's. Answers made
+ * only of numbers or short words are not judged.
+ */
+function answerInQuote(answer: string, quote: string): boolean {
+  const stem = (w: string) => w.slice(0, 5);
+  const words = bare(answer).split(' ').filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
+  if (!words.length) return true;
+  const quoted = new Set(bare(quote).split(' ').map(stem));
+  return words.some((w) => quoted.has(stem(w)));
+}
 
 /** Whether `quote` is in `text` — word for word, or nearly so (a hyphenated line end, a dropped word). */
 function isQuoted(text: string, quote: string): boolean {
@@ -265,12 +290,29 @@ const TOOLS: ToolSpec[] = [
     async run(input, { ctx }) {
       const limit = Math.min(60, Math.max(1, input.max_results ?? 20));
       // One extra result tells us whether there were more than we return.
+      const line = (h: SearchHit) => `- ${unitName(ctx)} ${h.unit + 1}${isEpub(ctx) ? ` (${h.label})` : ''}: ${h.pre}**${h.match}**${h.post}`;
       const hits = await ctx.engine.search(input.query, { limit: limit + 1 });
-      if (!hits.length) return `No matches for "${input.query}".`;
+      if (!hits.length) {
+        // Models often search for a whole question. Rather than "nothing", look for its telling
+        // words one by one: stems of the longer words, so that inflected forms match too.
+        const words = [...new Set(input.query.toLocaleLowerCase().match(/[\p{L}\p{N}'’-]{4,}/gu) ?? [])]
+          .filter((w) => !STOP_WORDS.has(w))
+          .sort((a, b) => b.length - a.length)
+          .slice(0, 4);
+        if (words.length < 2 && !(words.length === 1 && words[0] !== input.query.trim().toLocaleLowerCase())) return `No matches for "${input.query}".`;
+        const parts: string[] = [];
+        for (const word of words) {
+          const stem = word.length > 6 ? word.slice(0, word.length - 2) : word;
+          const found = await ctx.engine.search(stem, { limit: 4 });
+          if (found.length) parts.push(`"${stem}…":\n${found.map(line).join('\n')}`);
+        }
+        return parts.length
+          ? `The phrase "${input.query}" is not in the book as written. Matches for its separate words:\n\n${parts.join('\n\n')}\n\nRead the places that fit with read_book_text before answering.`
+          : `No matches for "${input.query}", nor for its separate words. Try other words, or semantic_search.`;
+      }
       const shown = hits.slice(0, limit);
-      const lines = shown.map((h) => `- ${unitName(ctx)} ${h.unit + 1}${isEpub(ctx) ? ` (${h.label})` : ''}: ${h.pre}**${h.match}**${h.post}`);
       const more = hits.length > limit ? `\n[More matches exist; only the first ${limit} are shown. Narrow the query or raise max_results.]` : '';
-      return `${lines.join('\n')}${more}`;
+      return `${shown.map(line).join('\n')}${more}`;
     },
   }),
 
@@ -467,6 +509,8 @@ const TOOLS: ToolSpec[] = [
       };
       const drafts = [];
       const refused: string[] = [];
+      const offTopic: string[] = [];
+      const giveaway: string[] = [];
       for (const c of input.cards) {
         // A wrong page number is no reason to lose the card.
         let unit = c.position !== undefined && c.position >= 1 && c.position <= count ? c.position - 1 : undefined;
@@ -490,6 +534,14 @@ const TOOLS: ToolSpec[] = [
           refused.push(`"${c.question.slice(0, 70)}"`);
           continue;
         }
+        if (givesAway(c.question, c.answer)) {
+          giveaway.push(`"${c.question.slice(0, 70)}"`);
+          continue;
+        }
+        if (!answerInQuote(c.answer, quote)) {
+          offTopic.push(`"${c.question.slice(0, 70)}" → "${c.answer.slice(0, 40)}"`);
+          continue;
+        }
         drafts.push({ front: c.question, back: c.answer, unit, label: unit !== undefined ? ctx.unitLabel(unit) : undefined, quote });
       }
       const result = drafts.length ? await ctx.study.addCards(drafts, input.topic) : { added: 0, skipped: 0, topic: input.topic ?? ctx.book.title };
@@ -497,7 +549,13 @@ const TOOLS: ToolSpec[] = [
       const notSaved = refused.length
         ? ` NOT saved: ${refused.length} card(s) whose quote is missing or is not in the book — ${refused.join('; ')}. Read that part with read_book_text and quote it word for word, or leave those cards out; do not tell the reader they were saved.`
         : '';
-      return `Saved ${result.added} flashcard(s) to the topic "${result.topic}".${skipped}${notSaved}${result.added ? ' The app schedules their reviews; the reader finds them in "Навчання".' : ''}`;
+      const unrelated = offTopic.length
+        ? ` NOT saved: ${offTopic.length} card(s) whose answer is not in the quoted words — ${offTopic.join('; ')}. A card's answer has to be what its quote says.`
+        : '';
+      const tooEasy = giveaway.length
+        ? ` NOT saved: ${giveaway.length} card(s) whose question already contains the answer — ${giveaway.join('; ')}. The question must ask for the fact, not state it (the quote goes in "quote", not in "question").`
+        : '';
+      return `Saved ${result.added} flashcard(s) to the topic "${result.topic}".${skipped}${notSaved}${unrelated}${tooEasy}${result.added ? ' The app schedules their reviews; the reader finds them in "Навчання".' : ''}`;
     },
   }),
 
@@ -626,7 +684,7 @@ const TOOLS: ToolSpec[] = [
     },
     schema: z.object({ query: z.string().min(1), mode: z.preprocess(blankToUndefined, z.enum(['exact', 'meaning']).optional()), book: optionalInt() }),
     label: (input) => `Шукаю в бібліотеці: «${input.query.slice(0, 40)}»`,
-    async run(input) {
+    async run(input, { ctx }) {
       const all = await libraryBooks();
       if (!all.length) return 'The library is empty.';
       const numberOf = new Map(all.map((b, i) => [b.id, i + 1]));
@@ -649,6 +707,7 @@ const TOOLS: ToolSpec[] = [
       }
       const lines: string[] = [];
       const unread: string[] = [];
+      let first: { book: BookRecord; unit: number; passage: string } | null = null;
       for (const book of scope) {
         const text = await ensureBookText(book).catch(() => 'no-file' as const);
         if (text === 'no-file') {
@@ -657,13 +716,18 @@ const TOOLS: ToolSpec[] = [
         }
         const found = searchBookText(book, text, input.query, scope.length === 1 ? 12 : 4);
         if (!found.total) continue;
+        first ??= { book, unit: found.hits[0].unit, passage: found.hits[0].match };
         lines.push(
           `Book ${numberOf.get(book.id)} "${book.title}": ${found.total} match(es).\n${found.hits.map((h) => `  [${h.label}; position ${h.unit + 1}] …${h.pre}${h.match}${h.post}…`).join('\n')}`,
         );
         if (lines.length >= 12) break;
       }
       const note = unread.length ? `\n\n(Not searched, the file is not on this device: ${unread.join(', ')}.)` : '';
-      return lines.length ? lines.join('\n\n') + note : `No book contains "${input.query}".${note} Scanned books are searchable only after text recognition; try other words, or mode "meaning".`;
+      if (!lines.length) return `No book contains "${input.query}".${note} Scanned books are searchable only after text recognition; try other words, or mode "meaning".`;
+      // In the library the reader gets a button to the first place found at once; the model may offer a better one.
+      if (first && ctx.offerBook) ctx.offerBook(first.book, first.unit, first.passage);
+      const offered = first && ctx.offerBook ? `\n\nThe reader now sees a button that opens the first match. To offer a different place instead, call open_book with its book and position numbers.` : '';
+      return lines.join('\n\n') + note + offered;
     },
   }),
 
@@ -795,7 +859,7 @@ const TOOLS: ToolSpec[] = [
     async run(input) {
       const signal = timeoutSignal(6000);
       const models = await listLocalModels(input.url, getSettings().localApiKey, signal);
-      return models.length ? `The server answers. Models: ${models.slice(0, 60).map((m) => m.id).join(', ')}` : 'The server answers but has no models.';
+      return models.length ? `The server answers. Models: ${models.slice(0, 60).map((m) => m.name).join(', ')}` : 'The server answers but has no models.';
     },
   }),
 

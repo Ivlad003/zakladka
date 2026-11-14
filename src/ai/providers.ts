@@ -200,5 +200,12 @@ export async function listLocalModels(baseUrl: string, apiKey: string, signal?: 
     // Something answered, but not an OpenAI-style API (a web page, for instance).
     throw new ProviderError(res.status, 'за цією адресою немає OpenAI-сумісного API (зазвичай адреса закінчується на /v1)', 'local');
   }
-  return (json.data ?? []).map((m) => ({ id: m.id, name: m.id })).sort((a, b) => a.id.localeCompare(b.id));
+  // Embedding models answer the same list but cannot chat; they go last and say what they are, so
+  // that the model picked by default is one the agents can talk to.
+  return (json.data ?? [])
+    .map((m) => ({ id: m.id, name: isEmbeddingModel(m.id) ? `${m.id} (лише ембединги)` : m.id }))
+    .sort((a, b) => Number(isEmbeddingModel(a.id)) - Number(isEmbeddingModel(b.id)) || a.id.localeCompare(b.id));
 }
+
+/** Whether a model id names an embedding model (by the usual naming), not a chat model. */
+export const isEmbeddingModel = (id: string): boolean => /embed|(^|[/:-])(bge|gte|e5)([-:._]|$)|minilm|rerank/i.test(id);

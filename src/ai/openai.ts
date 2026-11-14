@@ -80,11 +80,69 @@ function visibleText(raw: string): string {
   return end < 0 ? '' : trimmed.slice(end + 8).trimStart();
 }
 
+/** A short reply that only announces work ("let me find…", "here is the search result:") instead of giving an answer. */
+export function looksLikePromise(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 320) return false;
+  return /:s*$/.test(t) || /(давайте|спочатку|для того,? щоб|щоб (дати|надати|знайти)|зараз (я )?(знайду|прочитаю|перегляну|подивлюся)|я (знайду|прочитаю|перегляну|подивлюся|створю|пошукаю)|потрібно (переглянути|знайти|прочитати)|let me|i will (look|search|read|check|find|create)|i'll (look|search|read|check|find|create)|first,? i)/i.test(t);
+}
+
+/**
+ * A tool call written as text, when that is all the message is: Qwen-style `<tool_call>{"name", "arguments"}</tool_call>`,
+ * a bare `{"name", "arguments"}` object, or `tool_name {arguments}`. Longer prose that merely mentions a tool is left alone.
+ */
+export function parseWrittenCall(text: string, names: string[]): { name: string; arguments: string } | null {
+  const body = text.replace(/```(?:json)?/gi, '').trim();
+  if (!body || body.length > 800) return null;
+  const objectAt = (from: number): unknown => {
+    const start = body.indexOf('{', from);
+    if (start < 0) return undefined;
+    // The longest balanced object from there, ignoring braces inside strings.
+    let depth = 0;
+    let quoted = false;
+    for (let i = start; i < body.length; i++) {
+      const c = body[i];
+      if (quoted) {
+        if (c === '\\') i++;
+        else if (c === '"') quoted = false;
+      } else if (c === '"') quoted = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) {
+        try {
+          return JSON.parse(body.slice(start, i + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+    return undefined;
+  };
+  const asCall = (value: unknown) => {
+    if (!value || typeof value !== 'object') return null;
+    const v = value as { name?: unknown; arguments?: unknown; parameters?: unknown };
+    if (typeof v.name !== 'string' || !names.includes(v.name)) return null;
+    const args = v.arguments ?? v.parameters ?? {};
+    return { name: v.name, arguments: typeof args === 'string' ? args : JSON.stringify(args) };
+  };
+  const wrapped = asCall(objectAt(0));
+  if (wrapped) return wrapped;
+  for (const name of names) {
+    const at = body.search(new RegExp(`(^|[^\\w])${name}\\s*\\(?\\s*\\{`));
+    if (at < 0) continue;
+    // Whatever stands before the name must be short: a stray word, not an explanation.
+    if (at > 40) return null;
+    const args = objectAt(at);
+    if (args && typeof args === 'object') return { name, arguments: JSON.stringify(args) };
+  }
+  return null;
+}
+
 export async function runOpenAiTurn(opts: RunOptions, provider: OpenAiProvider): Promise<RunResult> {
   const { callbacks: cb, ctx, signal } = opts;
   const env: ToolEnv = { ctx, readLimit: provider.readLimit };
   let useTools = provider.tools;
   let toolsUnsupported = false;
+  let nudged = false;
   const specs = getTools({ vision: provider.vision && ctx.engine.kind === 'fixed', noBook: ctx.noBook });
   const toolDefs = specs.map((t) => ({
     type: 'function' as const,
@@ -175,10 +233,20 @@ export async function runOpenAiTurn(opts: RunOptions, provider: OpenAiProvider):
       cb.onThinking(false);
     }
 
-    const text = visibleText(raw);
+    let text = visibleText(raw);
     const toolCalls: ToolCall[] = calls
       .filter((c) => c?.name)
       .map((c, i) => ({ id: c.id || `call_${step}_${i}`, type: 'function', function: { name: c.name, arguments: c.args || '{}' } }));
+    // Small local models sometimes write the call out as text ("search_book {"query": …}", or their
+    // own <tool_call> markup) and the server passes it on as an answer. Taken for what it is, it runs.
+    if (useTools && !toolCalls.length && text) {
+      const written = parseWrittenCall(text, specs.map((s) => s.name));
+      if (written) {
+        cb.onStepDiscard();
+        toolCalls.push({ id: `call_${step}_text`, type: 'function', function: written });
+        text = '';
+      }
+    }
 
     if (finish === 'content_filter' && !text && !toolCalls.length) {
       return { status: 'refused', messages: opts.history };
@@ -187,6 +255,20 @@ export async function runOpenAiTurn(opts: RunOptions, provider: OpenAiProvider):
     messages.push({ role: 'assistant', content: text || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) });
 
     if (!toolCalls.length) {
+      // Small models often stop at announcing what they are about to do ("Let me look that up…").
+      // Once per turn they are asked to go ahead instead of the reader being left with the promise.
+      // Others fall silent after reading the tool results; they are asked for the answer.
+      const silent = !text.trim() && step > 0;
+      if (useTools && !nudged && (silent || looksLikePromise(text))) {
+        nudged = true;
+        messages.push({
+          role: 'user',
+          content: silent
+            ? 'Now answer my question from what the tools returned, citing where in the book it is.'
+            : 'Go ahead now: call the tools you need, then give the answer itself. Do not describe what you are going to do.',
+        });
+        continue;
+      }
       return {
         status: finish === 'length' ? 'truncated' : 'done',
         messages,
