@@ -11,6 +11,16 @@ export type TurnExtra = 'menu' | 'bookmark' | 'toc' | 'ai';
 export type AiLanguage = 'uk' | 'en' | 'auto';
 export type AiProviderId = 'anthropic' | 'openrouter' | 'local' | 'browser';
 /** Where the agents' web search goes. */
+/** An agent the reader wrote themselves (Advanced AI settings). */
+export interface CustomAgentDef {
+  id: string;
+  name: string;
+  description: string;
+  role: string;
+  /** Inside a book, in the library, or in both. */
+  where: 'book' | 'library' | 'both';
+}
+
 export type LibrarySort = 'recent' | 'title' | 'author' | 'progress' | 'added';
 export type WebSearch = 'off' | 'auto' | 'wikipedia' | 'searxng';
 /** How much book text a model can take in one go; local models are often run with small contexts. */
@@ -69,6 +79,11 @@ export interface Settings {
   voiceLang: string;
   /** Which generation of defaults the stored settings were written under (see `load`). */
   rev: number;
+  /** Advanced: agent instructions as the reader edited them (agent id → role), the shared style, extra instructions, own agents. */
+  promptRoles: Record<string, string>;
+  promptStyle: string;
+  promptExtra: string;
+  customAgents: CustomAgentDef[];
   /** Fit the first intervals of new cards to the reader's own answers. */
   studyPersonal: boolean;
   librarySort: LibrarySort;
@@ -151,6 +166,10 @@ const defaults: Settings = {
   browserModel: '',
   voiceLang: '',
   rev: 2,
+  promptRoles: {},
+  promptStyle: '',
+  promptExtra: '',
+  customAgents: [],
   studyPersonal: true,
   librarySort: 'recent',
   aloudRate: 1,

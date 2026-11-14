@@ -41,7 +41,7 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
   const settings = useSettings();
   const bookId = ctx.book.id;
   // Which conversation to show: the latest one with an agent, a new one, or a particular saved one.
-  const agents = useMemo(() => agentsFor(Boolean(ctx.noBook)), [ctx.noBook]);
+  const agents = useMemo(() => agentsFor(Boolean(ctx.noBook), settings), [ctx.noBook, settings]);
   const [wanted, setWanted] = useState<{ agentId: string; thread: 'latest' | 'new' | string }>(() => ({ agentId: agentsFor(Boolean(ctx.noBook))[0].id, thread: 'latest' }));
   const agentId = wanted.agentId;
   const setAgentId = useCallback((id: string) => setWanted({ agentId: id, thread: 'latest' }), []);
@@ -56,7 +56,7 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
   const apiRef = useRef<{ format: 'anthropic' | 'openai' | null; messages: unknown[] }>({ format: null, messages: [] });
   const abortRef = useRef<AbortController | null>(null);
   // The conversation currently loaded into `ui`/`apiRef` (null while loading); nothing is sent until it is there.
-  const [loaded, setLoaded] = useState<{ id: string; agentId: string; title?: string; createdAt: number } | null>(null);
+  const [loaded, setLoaded] = useState<{ id: string; agentId: string; title?: string; createdAt: number; system?: ChatThread['system'] } | null>(null);
   const uiRef = useRef(ui);
   uiRef.current = ui;
   const listRef = useRef<HTMLDivElement>(null);
@@ -86,7 +86,7 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
       // A turn interrupted by closing the app is shown as stopped.
       setUi((thread?.ui ?? []).map((m) => (m.role === 'assistant' && m.status === 'streaming' ? { ...m, status: 'stopped' } : m)));
       apiRef.current = { format: thread?.format ?? (thread?.api.length ? 'anthropic' : null), messages: thread?.api ?? [] };
-      setLoaded({ id: thread?.id ?? uid(), agentId: wanted.agentId, title: thread?.title, createdAt: thread?.createdAt ?? thread?.updatedAt ?? Date.now() });
+      setLoaded({ id: thread?.id ?? uid(), agentId: wanted.agentId, title: thread?.title, createdAt: thread?.createdAt ?? thread?.updatedAt ?? Date.now(), system: thread?.system });
     })();
     return () => {
       alive = false;
@@ -119,6 +119,8 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
       if (!('provider' in target) || !text.trim() || abortRef.current || !loaded) return;
       const thread = loaded;
       const targetAgentId = thread.agentId;
+      // Instructions are fixed when a conversation starts (prompt caching depends on it, and so does the reader's trust).
+      const systemSnap: NonNullable<ChatThread['system']> = { ...thread.system };
       const active = target.provider;
 
       const userMsg: UiMessage = { id: uid(), role: 'user', text: text.trim(), quote: attached };
@@ -157,7 +159,10 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
       try {
         const result = await runAgentTurn({
           provider: active,
-          system: (tools) => buildSystemPrompt(getAgent(targetAgentId), ctxRef.current.book, current.aiLanguage, tools, ctxRef.current.noBook),
+          system: (tools) => {
+            const key = tools ? 'tools' : 'plain';
+            return (systemSnap[key] ??= buildSystemPrompt(getAgent(targetAgentId), ctxRef.current.book, current.aiLanguage, tools, ctxRef.current.noBook));
+          },
           history,
           userText: text.trim(),
           quote: attached,
@@ -222,8 +227,10 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
           ui: [...before, userMsg, assistant],
           api: apiRef.current.messages,
           format: apiRef.current.format ?? undefined,
+          system: systemSnap,
           updatedAt: Date.now(),
         });
+        setLoaded((l) => (l && l.id === thread.id ? { ...l, system: systemSnap } : l));
       }
     },
     [bookId, loaded],

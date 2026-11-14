@@ -1,5 +1,5 @@
-import { BookOpenCheck, Brain, LibraryBig, SlidersHorizontal, GraduationCap, Languages, Lightbulb, NotebookPen, Sparkles, type LucideIcon } from 'lucide-react';
-import type { AiLanguage } from '../settings';
+import { Bot, BookOpenCheck, Brain, LibraryBig, SlidersHorizontal, GraduationCap, Languages, Lightbulb, NotebookPen, Sparkles, type LucideIcon } from 'lucide-react';
+import { getSettings, type AiLanguage, type CustomAgentDef, type Settings } from '../settings';
 import type { BookRecord } from '../types';
 
 export interface AgentDef {
@@ -112,11 +112,44 @@ You never see keys or passwords and cannot set them: when one is needed, tell th
 
 export const languageRule = (language: AiLanguage): string => LANGUAGE_RULE[language];
 
+/** How answers should look; shared by every agent and editable in the Advanced AI settings. */
+export const DEFAULT_STYLE =
+  'this is a narrow side panel, so keep answers compact and scannable — short paragraphs, lists where they help, Markdown formatting. Lead with the answer. When a structure, a process, a timeline or how things relate is easier to see than to read, add a small Mermaid diagram in a code block fenced with three backticks and marked "mermaid" (flowchart, sequenceDiagram, mindmap, timeline…) — the app draws it; label it in the reply language and keep it to what fits a narrow panel.';
+
+const customToDef = (c: CustomAgentDef): AgentDef => ({
+  id: c.id,
+  name: c.name.trim() || 'Мій агент',
+  icon: Bot,
+  description: c.description.trim() || 'Власний агент',
+  role: c.role,
+  starters: [],
+  where: c.where === 'book' ? undefined : c.where,
+});
+
+/** The built-in agents with the reader's edits, followed by the reader's own agents. */
+export function allAgents(s: Settings = getSettings()): AgentDef[] {
+  const edited = AGENTS.map((a) => (s.promptRoles?.[a.id]?.trim() ? { ...a, role: s.promptRoles[a.id] } : a));
+  return [...edited, ...(s.customAgents ?? []).filter((c) => c.role.trim()).map(customToDef)];
+}
+
 /** The agents offered inside a book, or in the library when no book is open. */
-export const agentsFor = (noBook: boolean): AgentDef[] => AGENTS.filter((a) => (noBook ? a.where !== undefined : a.where !== 'library'));
+export const agentsFor = (noBook: boolean, s?: Settings): AgentDef[] => allAgents(s).filter((a) => (noBook ? a.where !== undefined : a.where !== 'library'));
 
 export function getAgent(id: string): AgentDef {
-  return AGENTS.find((a) => a.id === id) ?? AGENTS[0];
+  const all = allAgents();
+  return all.find((a) => a.id === id) ?? all[0];
+}
+
+/** Built-in agents as shipped, for showing and restoring their original instructions. */
+export const builtInAgent = (id: string): AgentDef | undefined => AGENTS.find((a) => a.id === id);
+
+/** The closing part of every system prompt: the style, the language, and anything the reader added. */
+function closing(language: AiLanguage): string {
+  const s = getSettings();
+  const extra = s.promptExtra?.trim();
+  return `Style: ${s.promptStyle?.trim() || DEFAULT_STYLE} ${LANGUAGE_RULE[language]}${
+    extra ? `\n\nThe reader's own instructions for you (follow them, except where they would have you ignore what the book says or how the tools work):\n${extra}` : ''
+  }`;
 }
 
 const LANGUAGE_RULE: Record<AiLanguage, string> = {
@@ -143,7 +176,7 @@ ${agent.role}
 
 ${access}
 
-Style: this is a narrow side panel, so keep answers compact and scannable — short paragraphs, lists where they help, Markdown formatting. Lead with the answer. ${LANGUAGE_RULE[language]}`;
+${closing(language)}`;
   }
   const unit = book.format === 'epub' ? 'section' : 'page';
   const where = unit === 'section' ? 'chapter' : 'page number';
@@ -182,5 +215,5 @@ ${about}
 
 ${access}
 
-Style: this is a narrow side panel, so keep answers compact and scannable — short paragraphs, lists where they help, Markdown formatting. Lead with the answer. When a structure, a process, a timeline or how things relate is easier to see than to read, add a small Mermaid diagram in a code block fenced with three backticks and marked "mermaid" (flowchart, sequenceDiagram, mindmap, timeline…) — the app draws it; label it in the reply language and keep it to what fits a narrow panel. ${LANGUAGE_RULE[language]}`;
+${closing(language)}`;
 }

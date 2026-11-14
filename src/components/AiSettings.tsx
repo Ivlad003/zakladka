@@ -1,10 +1,11 @@
 import { applyUpdate, buildTime, checkForUpdate } from '../lib/update';
+import { AGENTS, builtInAgent, DEFAULT_STYLE } from '../ai/agents';
 import { useEffect, useMemo, useState } from 'react';
 import { Eye, LoaderCircle, RefreshCw, Search, Wrench, X } from 'lucide-react';
 import { isBlockedMixedContent, isOpenRouter, listLocalModels, listOpenRouterModels, MIXED_CONTENT_HINT, trimUrl, type ModelInfo } from '../ai/providers';
 import { BROWSER_MODELS, canRun, deleteBrowserModel, findBrowserModel, isModelDownloaded, loadBrowserModel, useBrowserModel, webGpuAvailable } from '../ai/browser-llm';
 import { DEFAULT_BROWSER_MODEL } from '../lib/semantic';
-import { cx, timeoutSignal } from '../lib/utils';
+import { cx, timeoutSignal, uid } from '../lib/utils';
 import { voiceTypingSupported } from './MicButton';
 import {
   LOCAL_PRESETS,
@@ -153,6 +154,8 @@ export function AiSettings({ onClose }: { onClose(): void }) {
           Агенти читають текст відкритої книги та ваші нотатки, щоб відповідати. Ці фрагменти надсилаються обраному провайдеру разом із запитанням; з
           локальними моделями вони не залишають ваш комп’ютер. Ключі зберігаються лише в цьому браузері.
         </p>
+
+        <AdvancedPrompts draft={draft} set={set} />
 
         <AppVersion />
 
@@ -732,5 +735,111 @@ function AppVersion() {
       </button>
       {said && <> — {said}</>}
     </p>
+  );
+}
+
+/**
+ * Advanced: what the app tells the model. The role of each agent, the style shared by all, the
+ * reader's own instructions, and agents of the reader's own. The parts that describe the book and
+ * the tools stay fixed: the agents cannot read the book without them.
+ */
+function AdvancedPrompts({ draft, set }: SectionProps) {
+  const [selected, setSelected] = useState(AGENTS[0].id);
+  const original = builtInAgent(selected)?.role ?? '';
+  const role = draft.promptRoles[selected] ?? original;
+  const setRole = (text: string) => {
+    const next = { ...draft.promptRoles };
+    if (!text.trim() || text === original) delete next[selected];
+    else next[selected] = text;
+    set({ promptRoles: next });
+  };
+  const edited = Object.keys(draft.promptRoles).length + (draft.promptStyle.trim() ? 1 : 0) + (draft.promptExtra.trim() ? 1 : 0);
+  const updateAgent = (id: string, patch: Partial<Settings['customAgents'][number]>) =>
+    set({ customAgents: draft.customAgents.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
+
+  return (
+    <details className="help advanced-prompts">
+      <summary>
+        Розширені: інструкції агентів{edited || draft.customAgents.length ? ` (змінено: ${edited}, власних агентів: ${draft.customAgents.length})` : ''}
+      </summary>
+      <p className="muted small">
+        Те, що застосунок каже моделі перед розмовою (системний промпт). Зміни діють для нових розмов — розпочата розмова зберігає інструкції, з якими почалася. Опис
+        книги, інструментів і правил роботи з ними змінити не можна: без них агент не зможе читати книгу. Типовий текст англійською — так моделі виконують його точніше, —
+        але писати можна будь-якою мовою.
+      </p>
+
+      <label className="field column">
+        <span>Агент</span>
+        <select value={selected} onChange={(e) => setSelected(e.target.value)}>
+          {AGENTS.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+              {draft.promptRoles[a.id] ? ' — змінено' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field column">
+        <span>Роль і завдання агента</span>
+        <textarea rows={9} value={role} onChange={(e) => setRole(e.target.value)} spellCheck={false} />
+      </label>
+      {draft.promptRoles[selected] && (
+        <button className="btn small" onClick={() => setRole(original)}>
+          Повернути типовий текст
+        </button>
+      )}
+
+      <label className="field column">
+        <span>Стиль відповідей (для всіх агентів)</span>
+        <textarea rows={5} value={draft.promptStyle || DEFAULT_STYLE} onChange={(e) => set({ promptStyle: e.target.value === DEFAULT_STYLE ? '' : e.target.value })} spellCheck={false} />
+        <small className="muted">Мову відповіді задає налаштування «Мова відповідей» вище; її додається в кінець.</small>
+      </label>
+      {draft.promptStyle.trim() && (
+        <button className="btn small" onClick={() => set({ promptStyle: '' })}>
+          Повернути типовий стиль
+        </button>
+      )}
+
+      <label className="field column">
+        <span>Ваші інструкції для всіх агентів</span>
+        <textarea
+          rows={3}
+          value={draft.promptExtra}
+          onChange={(e) => set({ promptExtra: e.target.value })}
+          placeholder="Наприклад: звертайся на «ти»; пояснюй на прикладах із програмування; відповідай не довше 5 речень."
+        />
+      </label>
+
+      <div className="field column">
+        <span>Власні агенти</span>
+        {draft.customAgents.map((a) => (
+          <div key={a.id} className="custom-agent">
+            <div className="row">
+              <input value={a.name} onChange={(e) => updateAgent(a.id, { name: e.target.value })} placeholder="Назва, напр. «Редактор»" aria-label="Назва агента" />
+              <select value={a.where} onChange={(e) => updateAgent(a.id, { where: e.target.value as 'book' | 'library' | 'both' })} aria-label="Де доступний">
+                <option value="book">У книзі</option>
+                <option value="library">У бібліотеці</option>
+                <option value="both">Всюди</option>
+              </select>
+            </div>
+            <input value={a.description} onChange={(e) => updateAgent(a.id, { description: e.target.value })} placeholder="Коротко, що він робить (підказка на кнопці)" aria-label="Опис агента" />
+            <textarea
+              rows={5}
+              value={a.role}
+              onChange={(e) => updateAgent(a.id, { role: e.target.value })}
+              placeholder="Хто цей агент і що має робити. Напр.: «Ти редактор. Знаходиш у вибраному фрагменті повтори, канцелярит і довгі речення та пропонуєш, як переписати.»"
+              aria-label="Інструкції агента"
+            />
+            <button className="btn small danger" onClick={() => set({ customAgents: draft.customAgents.filter((x) => x.id !== a.id) })}>
+              Видалити агента
+            </button>
+          </div>
+        ))}
+        <button className="btn small" onClick={() => set({ customAgents: [...draft.customAgents, { id: `custom-${uid()}`, name: '', description: '', role: '', where: 'book' }] })}>
+          Додати агента
+        </button>
+        <small className="muted">Агент з’явиться серед інших, щойно в нього будуть інструкції. Він користується тими самими інструментами, що й вбудовані.</small>
+      </div>
+    </details>
   );
 }

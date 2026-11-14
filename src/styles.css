@@ -3723,3 +3723,42 @@ img {
 .made-toc .search-progress {
   width: 100%;
 }
+
+
+/* ---------- Advanced: agent instructions ---------- */
+.advanced-prompts textarea {
+  width: 100%;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.advanced-prompts > .btn {
+  align-self: flex-start;
+  margin-bottom: 8px;
+}
+
+.custom-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.custom-agent .row {
+  display: flex;
+  gap: 6px;
+}
+
+.custom-agent .row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.custom-agent .btn {
+  align-self: flex-start;
+}

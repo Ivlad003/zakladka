@@ -187,6 +187,8 @@ export interface ChatThread {
   api: unknown[];
   /** Which API family `api` is written for; absent in threads saved before other providers existed. */
   format?: 'anthropic' | 'openai';
+  /** The system prompt the conversation started with (with and without tools), so that later edits to the instructions do not change a conversation under way. */
+  system?: { tools?: string; plain?: string };
   updatedAt: number;
 }
 
