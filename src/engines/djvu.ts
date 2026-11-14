@@ -2,8 +2,8 @@ import type { SearchHit, TocItem } from '../types';
 import { canvasToBlob } from '../lib/utils';
 import type { DjvuOpenResult, DjvuRenderResult, DjvuRequest, DjvuResponse } from './djvu.worker';
 import { searchUnits } from './search';
-import { RenderCancelled, type FixedEngine, type PageSize, type RenderHandle, type SearchOptions, type TextLayerHandle } from './types';
-import { buildZoneLayer, type TextZone } from './zones';
+import { RenderCancelled, type FixedEngine, type PageLayout, type PageSize, type RenderHandle, type SearchOptions, type TextLayerHandle } from './types';
+import { buildZoneLayer, layoutFromZones, type TextZone } from './zones';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type Payload = DistributiveOmit<DjvuRequest, 'id'>;
@@ -94,6 +94,12 @@ export class DjvuEngine implements FixedEngine {
     setScale(cssScale);
     buildZoneLayer(container, zones, this.pageSizes[index]);
     return { update: setScale, cancel: () => {} };
+  }
+
+  /** Lines of the page from its text layer's boxes (for the text mode). */
+  async getUnitLayout(unit: number): Promise<PageLayout | null> {
+    const { zones } = (await this.call({ type: 'zones', page: unit }).promise) as { zones: TextZone[] };
+    return zones.length ? layoutFromZones(zones, this.pageSizes[unit]) : null;
   }
 
   async renderImage(index: number, maxWidth: number): Promise<Blob> {

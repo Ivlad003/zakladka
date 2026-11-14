@@ -22,6 +22,8 @@ export interface BookRecord {
   cloudOnly?: boolean;
   /** Shelves the reader has put the book on. */
   tags?: string[];
+  /** PDF/DjVu shown in the text mode (laid out like an EPUB) on this device. */
+  reflow?: boolean;
   /** When the reader last edited the title, author or shelves; the newer edit wins when devices sync. */
   infoAt?: number;
   /** Cached epub.js locations (JSON), so percentages are available instantly on reopen. */
@@ -285,6 +287,16 @@ export interface ReviewLog {
   rating: 1 | 2 | 3 | 4;
   /** Days since the previous review; `null` for the first answer to a new card. */
   elapsedDays: number | null;
+}
+
+/** The text-mode EPUB made from a PDF or DjVu book (see engines/reflow.ts). */
+export interface ReflowCopy {
+  bookId: string;
+  version: number;
+  /** How many OCR pages the book had when it was made: more OCR text means it is made again. */
+  ocrPages: number;
+  epub: Blob;
+  builtAt: number;
 }
 
 /** A deleted conversation with an agent, remembered so that sync removes it on other devices too. */

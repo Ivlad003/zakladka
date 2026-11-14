@@ -6,6 +6,7 @@ import type {
   BookText,
   ChatThread,
   ChatTombstone,
+  ReflowCopy,
   InkPage,
   MemoryPalace,
   OcrPage,
@@ -35,6 +36,7 @@ class AppDB extends Dexie {
   reviews!: EntityTable<ReviewLog, 'id'>;
   studyTombs!: EntityTable<StudyTombstone, 'id'>;
   chatTombs!: EntityTable<ChatTombstone, 'id'>;
+  reflows!: EntityTable<ReflowCopy, 'bookId'>;
 
   constructor() {
     super('zakladka');
@@ -71,17 +73,22 @@ class AppDB extends Dexie {
     this.version(6).stores({
       chatTombs: 'id',
     });
+    // v7: the text-mode copies of PDF and DjVu books.
+    this.version(7).stores({
+      reflows: 'bookId',
+    });
   }
 }
 
 export const db = new AppDB();
 
 export async function deleteBook(bookId: string): Promise<void> {
-  const tables = [db.books, db.files, db.annotations, db.ink, db.chats, db.chatTombs, db.ocr, db.vectors, db.tombstones, db.syncMeta, db.texts];
+  const tables = [db.books, db.files, db.annotations, db.ink, db.chats, db.chatTombs, db.ocr, db.vectors, db.tombstones, db.syncMeta, db.texts, db.reflows];
   await db.transaction('rw', tables, async () => {
     await db.books.delete(bookId);
     await db.files.delete(bookId);
     await db.texts.delete(bookId);
+    await db.reflows.delete(bookId);
     await db.annotations.where('bookId').equals(bookId).delete();
     await db.ink.where('bookId').equals(bookId).delete();
     const chats = await db.chats.where('bookId').equals(bookId).primaryKeys();

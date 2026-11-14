@@ -7,7 +7,7 @@ import { sha256Hex } from './hash';
 /** PDF producers often leave the source file name in the Title field; a file name reads better then. */
 function isUsableTitle(title: string | undefined): title is string {
   if (!title || title.length < 2) return false;
-  return !/\.(docx?|rtf|indd|qxd|tex|dvi|pdf|pmd|cdr)$/i.test(title) && !/^(microsoft word|untitled)/i.test(title);
+  return !/\.(docx?|rtf|indd|qxd|tex|dvi|pdf|pmd|cdr|html?|odt|pages)$/i.test(title) && !/^(microsoft word|untitled)/i.test(title);
 }
 
 export class UnsupportedFileError extends Error {}

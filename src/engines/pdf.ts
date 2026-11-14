@@ -4,7 +4,7 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { SearchHit, TocItem } from '../types';
 import { canvasToBlob } from '../lib/utils';
 import { searchUnits } from './search';
-import { RenderCancelled, type FixedEngine, type PageSize, type RenderHandle, type SearchOptions, type TextLayerHandle } from './types';
+import { RenderCancelled, type FixedEngine, type PageLayout, type PageLine, type PageSize, type RenderHandle, type SearchOptions, type TextLayerHandle } from './types';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -161,6 +161,53 @@ export class PdfEngine implements FixedEngine {
 
   search(query: string, opts?: SearchOptions): Promise<SearchHit[]> {
     return searchUnits(this.unitCount, (i) => this.getUnitText(i), (i) => `стор. ${i + 1}`, query, opts);
+  }
+
+  /**
+   * Lines of text as they are laid out on the page. Text runs are taken in the order the file
+   * draws them (which keeps columns apart) and joined into a line while they stay on one baseline.
+   */
+  async getUnitLayout(unit: number): Promise<PageLayout | null> {
+    const page = await this.doc.getPage(unit + 1);
+    const view = page.getViewport({ scale: 1 });
+    const content = await page.getTextContent();
+    const lines: PageLine[] = [];
+    let line: (PageLine & { sizes: number[] }) | null = null;
+    let lastEnd = 0;
+    const finish = () => {
+      if (line && line.text.trim()) {
+        const sizes = line.sizes.sort((a, b) => a - b);
+        lines.push({ text: line.text.replace(/\s+/g, ' ').trim(), x: line.x, xEnd: line.xEnd, y: line.y, size: sizes[Math.floor(sizes.length / 2)] });
+      }
+      line = null;
+    };
+    for (const item of content.items) {
+      if (!('str' in item)) continue;
+      const [a, b, c, d, e, f] = item.transform as number[];
+      // Into the viewport's coordinates: origin at the top left, whatever the page's rotation or crop.
+      const [x, y] = view.convertToViewportPoint(e, f);
+      const size = Math.hypot(c, d) || Math.hypot(a, b) || item.height || 10;
+      const width = item.width * (view.scale || 1);
+      if (item.str) {
+        const sameLine = line && Math.abs(y - line.y) < size * 0.5 && x > line.x - size;
+        if (!sameLine) finish();
+        if (!line) {
+          line = { text: '', x, xEnd: x, y, size, sizes: [] };
+          lastEnd = x;
+        }
+        const current: PageLine & { sizes: number[] } = line;
+        // A visible gap between two runs is a space the file did not write.
+        if (current.text && x - lastEnd > size * 0.18 && !/\s$/.test(current.text) && !/^\s/.test(item.str)) current.text += ' ';
+        current.text += item.str;
+        current.x = Math.min(current.x, x);
+        current.xEnd = Math.max(current.xEnd, x + width);
+        if (item.str.trim()) current.sizes.push(size);
+        lastEnd = x + width;
+      }
+      if (item.hasEOL) finish();
+    }
+    finish();
+    return { width: view.width, height: view.height, lines };
   }
 
   async getToc(): Promise<TocItem[]> {

@@ -61,6 +61,9 @@ import { CardEditor } from './CardEditor';
 import { SwipeZones } from './SwipeZones';
 import { GestureDebug, TurnButtons } from './TurnButtons';
 import { ViewSettings } from './Settings';
+import { importBooks } from '../lib/library';
+import type { EpubEngineLike } from '../engines/types';
+import type { ReflowProgress } from '../engines/reflow';
 import { SidePanel, type SearchState, type SemanticState, type SideTab } from './SidePanel';
 
 // The AI panel pulls in the Claude SDK and the Markdown renderer; load them only when it is opened.
@@ -101,6 +104,13 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   const [toc, setToc] = useState<TocItem[]>([]);
   const [unit, setUnit] = useState(0);
   const [epubPos, setEpubPos] = useState<EpubPosition | null>(null);
+  // The text mode of a PDF/DjVu book: an EPUB made from its pages is on screen instead of the pages.
+  const [reflow, setReflow] = useState(false);
+  const reflowRef = useRef(false);
+  reflowRef.current = reflow;
+  const [reflowKey, setReflowKey] = useState(0);
+  const [reflowProgress, setReflowProgress] = useState<ReflowProgress | null>(null);
+  const [readerNotice, setReaderNotice] = useState<string | null>(null);
   const [locationsReady, setLocationsReady] = useState(false);
   const [scale, setScale] = useState(1);
 
@@ -162,6 +172,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   useEffect(() => {
     let alive = true;
     let opened: Engine | null = null;
+    const building = new AbortController();
     (async () => {
       const [record, file] = await Promise.all([db.books.get(bookId), db.files.get(bookId)]);
       if (!record) throw new Error('Книгу не знайдено в бібліотеці.');
@@ -184,6 +195,31 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
         opened = layered;
         setOcrEngine(layered);
       }
+      // The text mode: the pages laid out again as an EPUB (made once, then kept).
+      let reflowOn = false;
+      if (opened.kind === 'fixed' && record.reflow) {
+        const pages = opened;
+        try {
+          const { ensureReflow } = await import('../engines/reflow');
+          const ocrPages = await db.ocr.where('bookId').equals(bookId).count();
+          const epub = await ensureReflow(bookId, { engine: pages, title: record.title, author: record.author }, ocrPages, (p) => alive && setReflowProgress(p), building.signal);
+          if (!alive) return;
+          const text = await openEngine('epub', await epub.arrayBuffer());
+          if (!alive) return text.destroy();
+          pages.destroy();
+          opened = text;
+          reflowOn = true;
+          setOcrEngine(null);
+        } catch (err) {
+          if (!alive || (err instanceof DOMException && err.name === 'AbortError')) return;
+          // The pages stay as they are, and the reader is told why.
+          setReaderNotice(err instanceof Error ? err.message : String(err));
+          void db.books.update(bookId, { reflow: false });
+        } finally {
+          if (alive) setReflowProgress(null);
+        }
+      }
+      setReflow(reflowOn);
       const index = await db.vectors.get(bookId);
       if (!alive) return;
       setVectorIndex(index ?? null);
@@ -194,11 +230,13 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
       const position = latest.position;
       ownPositionRef.current = position;
       ownPositionAtRef.current = latest.positionAt ?? 0;
-      setStartPosition(position);
-      setUnit(opened.kind === 'fixed' ? clamp(Number(position ?? 0) || 0, 0, opened.unitCount - 1) : 0);
+      // In the text mode the position is still a page number: it opens at the start of that page.
+      const page = clamp(Number(position ?? 0) || 0, 0, opened.unitCount - 1);
+      setStartPosition(reflowOn ? ((opened as EpubEngineLike).book.spine.get(page)?.href ?? null) : position);
+      setUnit(opened.kind === 'fixed' || reflowOn ? page : 0);
       setEngine(opened);
       void opened.getToc().then((items) => alive && setToc(items));
-      if (opened.kind === 'epub') {
+      if (opened.kind === 'epub' && !reflowOn) {
         void opened.ensureLocations(record.epubLocations).then((json) => {
           if (!alive) return;
           setLocationsReady(true);
@@ -210,12 +248,13 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
 
     return () => {
       alive = false;
+      building.abort();
       opened?.destroy();
       searchAbortRef.current?.abort();
       ocrAbortRef.current?.abort();
       semanticAbortRef.current?.abort();
     };
-  }, [bookId]);
+  }, [bookId, reflowKey]);
 
   // ---- Remember where the reader is ----
   const flushPosition = useCallback(() => {
@@ -243,7 +282,8 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     ownPositionRef.current = remotePosition.position;
     ownPositionAtRef.current = Math.max(ownPositionAtRef.current, book?.positionAt ?? 0);
     if (jump) {
-      if (engine?.kind === 'epub') epubRef.current?.goToCfi(remotePosition.position);
+      if (engine?.kind === 'epub' && reflowRef.current) epubRef.current?.goToUnit(Number(remotePosition.position) || 0);
+      else if (engine?.kind === 'epub') epubRef.current?.goToCfi(remotePosition.position);
       else fixedRef.current?.goToPage(Number(remotePosition.position) || 0);
     }
     setRemotePosition(null);
@@ -282,9 +322,11 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
       setUnit(pos.unit);
       setSelection(null);
       setAnnotationPopup(null);
-      savePosition(pos.cfi, pos.percent);
+      // In the text mode a section is a page, and the page number is what is kept.
+      if (reflowRef.current) savePosition(String(pos.unit), unitCount > 1 ? pos.unit / (unitCount - 1) : 1);
+      else savePosition(pos.cfi, pos.percent);
     },
-    [savePosition],
+    [savePosition, unitCount],
   );
 
   // ---- Labels ----
@@ -314,8 +356,8 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   );
 
   const positionLabel = useCallback(
-    (u: number) => (engine?.kind === 'epub' ? (chapterTitle(u) ?? `Розділ ${u + 1}`) : `стор. ${u + 1}`),
-    [engine, chapterTitle],
+    (u: number) => (engine?.kind === 'epub' && !reflow ? (chapterTitle(u) ?? `Розділ ${u + 1}`) : `стор. ${u + 1}`),
+    [engine, chapterTitle, reflow],
   );
 
   // ---- Navigation ----
@@ -867,13 +909,22 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     return (
       <div className="reader-state">
         <LoaderCircle size={28} className="spin" />
-        <p className="muted">{downloading ? 'Завантажую книгу зі сховища…' : 'Відкриваю книгу…'}</p>
+        <p className="muted">
+          {downloading
+            ? 'Завантажую книгу зі сховища…'
+            : reflowProgress
+              ? `Готую текстовий режим: стор. ${reflowProgress.done} з ${reflowProgress.total}`
+              : 'Відкриваю книгу…'}
+        </p>
+        {reflowProgress && <p className="muted small">Це робиться один раз для книги.</p>}
       </div>
     );
   }
 
   const isFixed = engine.kind === 'fixed';
-  const progress = isFixed
+  /** Pages are what the reader moves through: a PDF/DjVu book, in either mode. */
+  const byPage = isFixed || reflow;
+  const progress = byPage
     ? unitCount > 1
       ? unit / (unitCount - 1)
       : 1
@@ -1095,7 +1146,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
         <button className="icon-btn foot-step" onClick={prev} title="Назад (←)">
           <ChevronLeft size={20} />
         </button>
-        {isFixed ? (
+        {byPage ? (
           <>
             <form
               className="page-form"
@@ -1177,7 +1228,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
             if (Math.abs(dx) > 30) hideBars();
           }}
           onTap={onTap}
-          label={isFixed ? `стор. ${unit + 1} / ${unitCount}` : `${truncate(chapterTitle(unit) ?? `Розділ ${unit + 1}`, 28)} · ${Math.round(progress * 100)}%`}
+          label={byPage ? `стор. ${unit + 1} / ${unitCount}` : `${truncate(chapterTitle(unit) ?? `Розділ ${unit + 1}`, 28)} · ${Math.round(progress * 100)}%`}
           progress={progress}
         />
       )}
@@ -1278,11 +1329,19 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
         </div>
       )}
 
+      {readerNotice && !remotePosition && (
+        <div className="reader-toast" role="status">
+          <span>{readerNotice}</span>
+          <button className="icon-btn" onClick={() => setReaderNotice(null)} title="Закрити" aria-label="Закрити">
+            <X size={16} />
+          </button>
+        </div>
+      )}
       {remotePosition && (
         <div className="reader-toast" role="status">
           <span>
             На іншому пристрої ви зупинилися {remotePosition.progress > progress ? 'далі' : 'раніше'}:{' '}
-            {isFixed ? `стор. ${(Number(remotePosition.position) || 0) + 1}` : `${Math.round(remotePosition.progress * 100)}%`}
+            {byPage ? `стор. ${(Number(remotePosition.position) || 0) + 1}` : `${Math.round(remotePosition.progress * 100)}%`}
           </span>
           <button className="btn small primary" onClick={() => dismissRemotePosition(true)}>
             Перейти
@@ -1419,10 +1478,40 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
           onClose={() => setOcrOpen(false)}
         />
       )}
-      {viewMenu && <ViewSettings kind={engine.kind} scale={scale} onClose={() => setViewMenu(false)} />}
+      {viewMenu && (
+        <ViewSettings
+          kind={engine.kind}
+          scale={scale}
+          textMode={book.format === 'epub' ? undefined : { on: reflow, onChange: (on) => void switchTextMode(on), onSaveCopy: () => void saveTextCopy() }}
+          onClose={() => setViewMenu(false)}
+        />
+      )}
       {aiSettings && <AiSettings onClose={() => setAiSettings(false)} />}
     </div>
   );
+
+  /** Between the pages as they are and their text laid out like an EPUB; the book opens again at the same page. */
+  async function switchTextMode(on: boolean) {
+    if (on === reflow) return;
+    flushPosition();
+    setViewMenu(false);
+    setReaderNotice(null);
+    await db.books.update(bookId, { reflow: on });
+    setEngine(null);
+    setEpubPos(null);
+    setLocationsReady(false);
+    setReflowKey((k) => k + 1);
+  }
+
+  /** The text mode's EPUB as a book of its own in the library. */
+  async function saveTextCopy() {
+    const kept = await db.reflows.get(bookId);
+    if (!kept || !book) return;
+    setViewMenu(false);
+    const name = `${book.title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'book'} (текст).epub`;
+    const result = await importBooks([new File([kept.epub], name, { type: 'application/epub+zip' })]);
+    setReaderNotice(result.errors[0] ?? `EPUB-копію «${book.title}» додано до бібліотеки.`);
+  }
 
   function commitSeek() {
     if (seekDraft === null) return;

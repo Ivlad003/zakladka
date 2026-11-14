@@ -37,6 +37,24 @@ export interface TextLayerHandle {
   cancel(): void;
 }
 
+/** One line of text on a page, in page units with the origin at the top left. */
+export interface PageLine {
+  text: string;
+  /** Left and right ends of the line. */
+  x: number;
+  xEnd: number;
+  /** Baseline, measured from the top of the page. */
+  y: number;
+  /** Font size. */
+  size: number;
+}
+
+export interface PageLayout {
+  width: number;
+  height: number;
+  lines: PageLine[];
+}
+
 export interface FixedEngine extends EngineBase {
   readonly kind: 'fixed';
   /** May be corrected lazily for very long documents; `onPageSize` fires when it changes. */
@@ -50,6 +68,8 @@ export interface FixedEngine extends EngineBase {
   buildTextLayer(index: number, container: HTMLElement, cssScale: number): Promise<TextLayerHandle>;
   /** JPEG of the page, at most `maxWidth` pixels wide. */
   renderImage(index: number, maxWidth: number): Promise<Blob>;
+  /** The page's lines of text with where they sit and how big they are; absent where the format cannot tell. */
+  getUnitLayout?(unit: number): Promise<PageLayout | null>;
 }
 
 export interface EpubEngineLike extends EngineBase {

@@ -1,7 +1,7 @@
 import type { BookFormat, OcrPage, SearchHit, TocItem } from '../types';
 import { searchUnits } from './search';
-import type { FixedEngine, PageSize, RenderHandle, SearchOptions, TextLayerHandle } from './types';
-import { buildZoneLayer } from './zones';
+import type { FixedEngine, PageLayout, PageSize, RenderHandle, SearchOptions, TextLayerHandle } from './types';
+import { buildZoneLayer, layoutFromZones } from './zones';
 
 /**
  * Wraps a PDF/DjVu engine and fills in OCR results wherever a page has no text of its own.
@@ -97,6 +97,15 @@ export class OcrLayeredEngine implements FixedEngine {
 
   renderImage(index: number, maxWidth: number): Promise<Blob> {
     return this.inner.renderImage(index, maxWidth);
+  }
+
+  /** The file's own layout, or for a page recognised by OCR, the layout of the recognised words. */
+  async getUnitLayout(unit: number): Promise<PageLayout | null> {
+    const layout = this.inner.getUnitLayout ? await this.inner.getUnitLayout(unit) : null;
+    if (layout?.lines.some((l) => l.text.trim())) return layout;
+    // A scanned page: the recognised words carry their boxes too.
+    const ocr = this.pages.get(unit);
+    return ocr?.words.length ? layoutFromZones(ocr.words.map((w) => ({ text: w.text, x: w.x, y: w.y, w: w.w, h: w.h })), this.pageSizes[unit]) : null;
   }
 
   getToc(): Promise<TocItem[]> {

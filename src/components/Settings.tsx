@@ -122,7 +122,14 @@ function TurningSettings() {
 }
 
 /** Reading appearance popover ("Aa"). `scale` is the effective zoom of a PDF/DjVu view. */
-export function ViewSettings({ kind, scale, onClose }: { kind: 'fixed' | 'epub'; scale: number; onClose(): void }) {
+/** The text mode of a PDF or DjVu book: whether it is on, and what can be done from the menu. */
+export interface TextModeControl {
+  on: boolean;
+  onChange(on: boolean): void;
+  onSaveCopy(): void;
+}
+
+export function ViewSettings({ kind, scale, textMode, onClose }: { kind: 'fixed' | 'epub'; scale: number; textMode?: TextModeControl; onClose(): void }) {
   const s = useSettings();
   const zoomBy = (factor: number) => updateSettings({ fixedZoom: Math.min(6, Math.max(0.25, Math.round(scale * factor * 100) / 100)) });
 
@@ -134,6 +141,34 @@ export function ViewSettings({ kind, scale, onClose }: { kind: 'fixed' | 'epub';
           <span>Тема</span>
           <Segmented value={s.theme} options={THEMES} onChange={(theme) => updateSettings({ theme })} />
         </label>
+
+        {textMode && (
+          <>
+            <label className="field">
+              <span>Показувати</span>
+              <Segmented
+                value={textMode.on ? 'text' : 'original'}
+                options={[
+                  { id: 'original', label: 'Оригінал' },
+                  { id: 'text', label: 'Текст' },
+                ]}
+                onChange={(v) => textMode.onChange(v === 'text')}
+              />
+            </label>
+            <p className="muted small">
+              {textMode.on ? (
+                <>
+                  Текст сторінок, розкладений як в EPUB: шрифт, розмір, інтервал і тема — на ваш смак. Малюнки, таблиці й формули точніші в «Оригіналі».{' '}
+                  <button type="button" className="link" onClick={textMode.onSaveCopy}>
+                    Зберегти як окрему EPUB-книгу
+                  </button>
+                </>
+              ) : (
+                '«Текст» показує текст сторінок як в EPUB — зручно на телефоні: шрифт і розмір на ваш смак, без масштабування.'
+              )}
+            </p>
+          </>
+        )}
 
         {kind === 'epub' ? (
           <>
