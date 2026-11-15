@@ -13,12 +13,18 @@ function isUsableTitle(title: string | undefined): title is string {
 export class UnsupportedFileError extends Error {}
 
 /**
- * Formats the reader has no engine for but can turn into an EPUB: FB2 (plain or zipped) and Kindle
- * books without DRM (MOBI, PRC, AZW, AZW3). Each converter is loaded only when such a file turns up.
+ * Formats the reader has no engine for but can turn into an EPUB: FB2 (plain or zipped), Kindle
+ * books without DRM (MOBI, PRC, AZW, AZW3) and JW Library publications (JWPUB). Each converter is
+ * loaded only when such a file turns up.
  */
 async function convertToEpub(chosen: File): Promise<{ file: File; original: ArrayBuffer } | null> {
   const exact = (bytes: Uint8Array) => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   const named = (epub: Blob, ending: RegExp) => new File([epub], `${chosen.name.replace(ending, '')}.epub`, { type: 'application/epub+zip' });
+  if (/\.jwpub$/i.test(chosen.name)) {
+    const { jwpubToEpub } = await import('../engines/jwpub');
+    const bytes = new Uint8Array(await chosen.arrayBuffer());
+    return { file: named((await jwpubToEpub(bytes)).epub, /\.jwpub$/i), original: exact(bytes) };
+  }
   if (/\.(fb2|fb2\.zip|fbz|zip)$/i.test(chosen.name)) {
     const { readFb2, fb2ToEpub } = await import('../engines/fb2');
     const fb2 = await readFb2(chosen);
@@ -36,12 +42,12 @@ async function convertToEpub(chosen: File): Promise<{ file: File; original: Arra
 
 /** Adds a file to the library and returns the book id (the existing id if it was already imported). */
 export async function importBook(chosen: File): Promise<string> {
-  // FB2 and MOBI become an EPUB on the way in. The id still comes from the original, so the same
-  // book added on two devices — zipped on one, plain on the other — is one book to the sync.
+  // FB2, MOBI and JWPUB become an EPUB on the way in. The id still comes from the original, so the
+  // same book added on two devices — zipped on one, plain on the other — is one book to the sync.
   const converted = await convertToEpub(chosen);
   const file = converted?.file ?? chosen;
   const format = await detectFormat(file);
-  if (!format) throw new UnsupportedFileError(`«${chosen.name}»: підтримуються EPUB, PDF, DjVu, FB2 та MOBI`);
+  if (!format) throw new UnsupportedFileError(`«${chosen.name}»: підтримуються EPUB, PDF, DjVu, FB2, MOBI та JWPUB`);
 
   // Books added before ids were derived from the content are recognised by name and size.
   const legacy = await db.books.filter((b) => b.fileName === file.name && b.size === file.size && !b.cloudOnly).first();

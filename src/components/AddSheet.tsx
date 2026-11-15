@@ -53,7 +53,7 @@ export function AddSheet({ onPickFiles, initialUrl, onSaved, onClose }: Props) {
           <FileUp size={22} />
           <span>
             <strong>Книги з пристрою</strong>
-            <small className="muted">EPUB, PDF, DjVu, FB2, MOBI</small>
+            <small className="muted">EPUB, PDF, DjVu, FB2, MOBI, JWPUB</small>
           </span>
         </button>
         <div className="add-choice article">

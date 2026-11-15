@@ -2,7 +2,7 @@
   "name": "zakladka-reader",
   "private": true,
   "version": "0.1.0",
-  "description": "Закладка — PWA-читалка EPUB / PDF / DjVu / FB2 / MOBI з AI-агентами, нотатками, X-Ray і картками для запам'ятовування",
+  "description": "Закладка — PWA-читалка EPUB / PDF / DjVu / FB2 / MOBI / JWPUB з AI-агентами, нотатками, X-Ray і картками для запам'ятовування",
   "license": "MIT",
   "homepage": "https://ivlad003.github.io/zakladka/",
   "repository": {
