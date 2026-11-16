@@ -31,6 +31,12 @@ export interface EpubViewApi {
   goToHref(href: string, fallbackUnit?: number): void;
   goToUnit(unit: number): void;
   goToPercent(p: number): void;
+  /**
+   * A page turn is reported a moment after the page is on screen. This is the place of a page that
+   * is shown but has not been reported yet (null when there is none), for a caller about to close
+   * the view or leave the app, who cannot wait for the report.
+   */
+  pendingPlace(): { unit: number; cfi: string } | null;
   clearSelection(): void;
   /** A swipe made outside the page (on the swipe bar): the page follows the finger by `dx` pixels… */
   drag(dx: number): void;
@@ -829,6 +835,19 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
         const unit = Math.min(engine.unitCount - 1, Math.floor(p * engine.unitCount));
         const section = engine.book.spine.get(unit);
         if (section) display(section.href);
+      },
+      pendingPlace: () => {
+        // Sliding or being laid out again: the page shown is not yet where the reader is.
+        if (turningRef.current() || layoutRef.current > 0) return null;
+        try {
+          const start = (renditionRef.current?.currentLocation() as unknown as Location | undefined)?.start;
+          // The page last reported is known to the caller already.
+          if (!start?.cfi || start.cfi === currentCfiRef.current) return null;
+          return { unit: start.index, cfi: start.cfi };
+        } catch {
+          // epub.js cannot tell the place of a view it has not finished showing.
+          return null;
+        }
       },
       pageKey: () => (renditionRef.current?.currentLocation() as unknown as Location | undefined)?.start?.cfi ?? '',
       visibleText: async () => {

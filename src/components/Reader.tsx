@@ -51,7 +51,7 @@ import { buildIndex, describeEmbedError, getEmbedder, searchIndex, type BuildPro
 import { downloadBookFile } from '../lib/sync';
 import { clamp, cx, isTypingTarget, truncate, uid } from '../lib/utils';
 import { getSettings, updateSettings, useSettings } from '../settings';
-import type { Annotation, DrawState, DrawTool, HighlightColor, SearchHit, SelectionInfo, Stroke, TocItem, VectorIndex } from '../types';
+import type { Annotation, BookRecord, DrawState, DrawTool, HighlightColor, SearchHit, SelectionInfo, Stroke, TocItem, VectorIndex } from '../types';
 import type { AiRequest } from './AiPanel';
 import { EpubView, type EpubPosition, type EpubViewApi } from './EpubView';
 import { NoteEditor } from './NoteEditor';
@@ -207,9 +207,12 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   unitRef.current = unit;
   const undoRef = useRef<{ page: number; strokeId: string }[]>([]);
   const searchAbortRef = useRef<AbortController | null>(null);
-  const pendingSaveRef = useRef<{ position: string; progress: number } | null>(null);
+  const pendingSaveRef = useRef<{ position: string; progress: number; reflowPlace?: NonNullable<BookRecord['reflowPlace']> } | null>(null);
   /** The position this reader last loaded or saved; `undefined` until the book is open. */
   const ownPositionRef = useRef<string | null | undefined>(undefined);
+  /** In the text mode: the place within the page that was last loaded or saved, and which text copy it is in. */
+  const ownPlaceRef = useRef<string | null>(null);
+  const reflowBuiltAtRef = useRef(0);
   /** Timestamp of that position; anything newer in the database came from another device. */
   const ownPositionAtRef = useRef(0);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -257,13 +260,14 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
         try {
           const { ensureReflow } = await import('../engines/reflow');
           const ocrPages = await db.ocr.where('bookId').equals(bookId).count();
-          const epub = await ensureReflow(bookId, { engine: pages, title: record.title, author: record.author }, ocrPages, (p) => alive && setReflowProgress(p), building.signal);
+          const copy = await ensureReflow(bookId, { engine: pages, title: record.title, author: record.author }, ocrPages, (p) => alive && setReflowProgress(p), building.signal);
           if (!alive) return;
-          const text = await openEngine('epub', await epub.arrayBuffer());
+          const text = await openEngine('epub', await copy.epub.arrayBuffer());
           if (!alive) return text.destroy();
           pages.destroy();
           opened = text;
           reflowOn = true;
+          reflowBuiltAtRef.current = copy.builtAt;
           setOcrEngine(null);
         } catch (err) {
           if (!alive || (err instanceof DOMException && err.name === 'AbortError')) return;
@@ -285,9 +289,14 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
       const position = latest.position;
       ownPositionRef.current = position;
       ownPositionAtRef.current = latest.positionAt ?? 0;
-      // In the text mode the position is still a page number: it opens at the start of that page.
+      // In the text mode the position is still a page number. A page fills several screens of text, so
+      // the book opens at the place last read on that page; at the page's start when the page was
+      // reached some other way (in the other mode, on another device) or the text was made again.
       const page = clamp(Number(position ?? 0) || 0, 0, opened.unitCount - 1);
-      setStartPosition(reflowOn ? ((opened as EpubEngineLike).book.spine.get(page)?.href ?? null) : position);
+      const place = reflowOn ? latest.reflowPlace : undefined;
+      const placeOnPage = place && place.unit === page && place.builtAt === reflowBuiltAtRef.current ? place.cfi : null;
+      ownPlaceRef.current = placeOnPage;
+      setStartPosition(reflowOn ? (placeOnPage ?? (opened as EpubEngineLike).book.spine.get(page)?.href ?? null) : position);
       setUnit(opened.kind === 'fixed' || reflowOn ? page : 0);
       setEngine(opened);
       void opened.getToc().then((items) => alive && setToc(items));
@@ -318,9 +327,16 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     clearTimeout(saveTimerRef.current);
     const pending = pendingSaveRef.current;
     pendingSaveRef.current = null;
+    if (!pending) return;
+    const placeMoved = pending.reflowPlace !== undefined && pending.reflowPlace.cfi !== ownPlaceRef.current;
+    if (pending.reflowPlace) ownPlaceRef.current = pending.reflowPlace.cfi;
     // Merely opening a book reports the place it was opened at; that is not a move worth a new
     // timestamp, or it would override a newer position from another device.
-    if (!pending || pending.position === ownPositionRef.current) return;
+    if (pending.position === ownPositionRef.current) {
+      // Further down the same page in the text mode: the page number stands, the place on it is new.
+      if (placeMoved) void db.books.update(bookId, { reflowPlace: pending.reflowPlace });
+      return;
+    }
     ownPositionRef.current = pending.position;
     ownPositionAtRef.current = Date.now();
     void db.books.update(bookId, { ...pending, positionAt: ownPositionAtRef.current });
@@ -347,28 +363,44 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   };
 
   const savePosition = useCallback(
-    (position: string, progress: number) => {
-      pendingSaveRef.current = { position, progress: clamp(progress, 0, 1) };
+    /** `place`: in the text mode, where on the page (`position`) the reader is. */
+    (position: string, progress: number, place?: { unit: number; cfi: string }) => {
+      pendingSaveRef.current = {
+        position,
+        progress: clamp(progress, 0, 1),
+        ...(place ? { reflowPlace: { unit: place.unit, cfi: place.cfi, builtAt: reflowBuiltAtRef.current } } : {}),
+      };
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(flushPosition, 400);
     },
     [flushPosition],
   );
 
+  const unitCount = engine?.unitCount ?? 1;
+
+  /**
+   * In the text mode, writes down a page that is on screen but has not been reported yet: the report
+   * comes a moment after a page turn, too late for a reader who switches modes or leaves the app.
+   */
+  const saveTextPlaceNow = useCallback(() => {
+    const place = reflowRef.current ? epubRef.current?.pendingPlace() : null;
+    if (place) savePosition(String(place.unit), unitCount > 1 ? place.unit / (unitCount - 1) : 1, place);
+    flushPosition();
+  }, [savePosition, flushPosition, unitCount]);
+
   useEffect(() => {
     // A phone may close a hidden app without another word (iOS seldom sends pagehide to a home-screen
     // app): the place is written as soon as the app is out of sight.
-    const onHidden = () => document.visibilityState === 'hidden' && flushPosition();
-    window.addEventListener('pagehide', flushPosition);
+    const onHidden = () => document.visibilityState === 'hidden' && saveTextPlaceNow();
+    window.addEventListener('pagehide', saveTextPlaceNow);
     document.addEventListener('visibilitychange', onHidden);
     return () => {
-      window.removeEventListener('pagehide', flushPosition);
+      window.removeEventListener('pagehide', saveTextPlaceNow);
       document.removeEventListener('visibilitychange', onHidden);
-      flushPosition();
     };
-  }, [flushPosition]);
-
-  const unitCount = engine?.unitCount ?? 1;
+  }, [saveTextPlaceNow]);
+  // The book is being closed: what is still waiting to be written is written.
+  useEffect(() => flushPosition, [flushPosition]);
 
   const onPageChange = useCallback(
     (page: number) => {
@@ -391,8 +423,9 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
       }
       setSelection(null);
       setAnnotationPopup(null);
-      // In the text mode a section is a page, and the page number is what is kept.
-      if (reflowRef.current) savePosition(String(pos.unit), progress);
+      // In the text mode a section is a page, and the page number is what is kept; the place on the
+      // page goes beside it.
+      if (reflowRef.current) savePosition(String(pos.unit), progress, { unit: pos.unit, cfi: pos.cfi });
       else savePosition(pos.cfi, pos.percent);
       trackerRef.current?.moved(progress);
     },
@@ -1738,10 +1771,13 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
     </div>
   );
 
-  /** Between the pages as they are and their text laid out like an EPUB; the book opens again at the same page. */
+  /**
+   * Between the pages as they are and their text laid out like an EPUB; the book opens again at the
+   * same page, and back in the text at the place where it was left.
+   */
   async function switchTextMode(on: boolean) {
     if (on === reflow) return;
-    flushPosition();
+    saveTextPlaceNow();
     setViewMenu(false);
     setReaderNotice(null);
     await db.books.update(bookId, { reflow: on });

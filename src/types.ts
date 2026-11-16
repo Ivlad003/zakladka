@@ -24,6 +24,12 @@ export interface BookRecord {
   tags?: string[];
   /** PDF/DjVu shown in the text mode (laid out like an EPUB) on this device. */
   reflow?: boolean;
+  /**
+   * Where the reader is in the text mode. The position itself stays a page number, the same in both
+   * modes; a page fills several screens of text, and this is the place within that page (`unit`), in
+   * the text copy made at `builtAt`.
+   */
+  reflowPlace?: { unit: number; cfi: string; builtAt: number };
   /** When the book was read to the end (0 or absent: not yet); counts towards the year's goal. */
   finishedAt?: number;
   /** A web article saved to read later: where it came from. */

@@ -224,17 +224,21 @@ export async function buildReflow(source: ReflowSource, onProgress: (p: ReflowPr
   });
 }
 
-/** The text-mode EPUB of a book, made once and kept; made again when the book's OCR text has changed. */
+/**
+ * The text-mode EPUB of a book, made once and kept; made again when the book's OCR text has changed.
+ * `builtAt` tells one copy from the next: a place kept inside a copy means nothing in another.
+ */
 export async function ensureReflow(
   bookId: string,
   source: ReflowSource,
   ocrPages: number,
   onProgress: (p: ReflowProgress) => void,
   signal: AbortSignal,
-): Promise<Blob> {
+): Promise<{ epub: Blob; builtAt: number }> {
   const kept = await db.reflows.get(bookId);
-  if (kept && kept.version === REFLOW_VERSION && kept.ocrPages === ocrPages) return kept.epub;
+  if (kept && kept.version === REFLOW_VERSION && kept.ocrPages === ocrPages) return { epub: kept.epub, builtAt: kept.builtAt };
   const epub = await buildReflow(source, onProgress, signal);
-  await db.reflows.put({ bookId, version: REFLOW_VERSION, ocrPages, epub, builtAt: Date.now() });
-  return epub;
+  const builtAt = Date.now();
+  await db.reflows.put({ bookId, version: REFLOW_VERSION, ocrPages, epub, builtAt });
+  return { epub, builtAt };
 }
