@@ -53,6 +53,9 @@ interface RemoteMeta {
   addedAt: number;
   unitCount: number;
   hasCover: boolean;
+  /** Where the book came from (a saved article, a book made from a repository); absent in older uploads. */
+  sourceUrl?: string;
+  made?: BookRecord['made'];
 }
 
 interface BookState {
@@ -317,6 +320,8 @@ async function runSync(store: S3Store, step: (text: string) => void): Promise<Sy
         unitCount: meta.unitCount,
         cover,
         cloudOnly: true,
+        ...(meta.sourceUrl ? { sourceUrl: meta.sourceUrl } : {}),
+        ...(meta.made ? { made: meta.made } : {}),
       });
     });
     report.downloaded++;
@@ -343,6 +348,8 @@ async function runSync(store: S3Store, step: (text: string) => void): Promise<Sy
         addedAt: book.addedAt,
         unitCount: book.unitCount,
         hasCover: Boolean(book.cover),
+        ...(book.sourceUrl ? { sourceUrl: book.sourceUrl } : {}),
+        ...(book.made ? { made: book.made } : {}),
       };
       // meta.json goes last: its presence tells other devices that the upload is complete.
       await store.putJson(bookKey(book.id, 'meta.json'), remoteMeta);

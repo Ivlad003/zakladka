@@ -9,7 +9,7 @@ const MAX_JSON_RETRIES = 2;
 /** Lets the API drop thinking blocks that no longer match the conversation instead of failing the request. */
 const THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01';
 /** On a safety-classifier decline the API re-runs the request on a fallback model within the same call. */
-const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+export const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 function toResultContent(output: ToolOutput): Anthropic.Beta.BetaToolResultBlockParam['content'] {
   if (!output.image) return output.text;
@@ -25,7 +25,7 @@ function toResultContent(output: ToolOutput): Anthropic.Beta.BetaToolResultBlock
  */
 export async function runAnthropicTurn(opts: RunOptions, provider: Extract<ChatProvider, { kind: 'anthropic' }>): Promise<RunResult> {
   const { callbacks: cb, ctx, signal } = opts;
-  const env: ToolEnv = { ctx, readLimit: provider.readLimit };
+  const env: ToolEnv = { ctx, readLimit: provider.readLimit, signal };
   // The user's own key, kept on their device; there is no backend to proxy through.
   const client = new Anthropic({
     apiKey: provider.apiKey,

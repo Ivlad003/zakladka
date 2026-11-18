@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BookOpen, X } from 'lucide-react';
+import { BookOpen, LoaderCircle, X } from 'lucide-react';
 import type { AgentContext } from '../ai/tools';
 import type { Engine } from '../engines/types';
 import { LIBRARY_CHAT } from '../lib/chats';
@@ -49,10 +49,15 @@ const NO_ENGINE = {
 
 const nothing = () => {};
 
-/** The AI panel over the library: a librarian that searches every book, and the settings helper. */
+/**
+ * The conversation with the agents that work with the whole library (the agent page): a librarian
+ * that searches every book and can add one made from a GitHub repository, and the settings helper.
+ */
 export function LibraryAssistant({ thread, onOpenBook, onOpenSettings, onClose }: Props) {
   // What the librarian proposes to open; the reader decides.
   const [offer, setOffer] = useState<{ book: BookRecord; unit?: number; passage?: string } | null>(null);
+  // A book being written at the agent's request: minutes of work the reader should see moving.
+  const [work, setWork] = useState<{ step: string; done: number; total: number } | null>(null);
 
   const ctx = useMemo<AgentContext>(
     () => ({
@@ -68,6 +73,7 @@ export function LibraryAssistant({ thread, onOpenBook, onOpenSettings, onClose }
       study: studyApiFor(NO_BOOK),
       unitLabel: () => '',
       offerBook: (book, unit, passage) => setOffer({ book, unit, passage }),
+      showWork: setWork,
     }),
     [],
   );
@@ -79,7 +85,7 @@ export function LibraryAssistant({ thread, onOpenBook, onOpenSettings, onClose }
   };
 
   return (
-    <div className="library-ai">
+    <div className="agent-chat">
       {offer && (
         <div className="ai-offer">
           <button className="btn primary" onClick={open}>
@@ -91,6 +97,16 @@ export function LibraryAssistant({ thread, onOpenBook, onOpenSettings, onClose }
           <button className="icon-btn" onClick={() => setOffer(null)} title="Сховати" aria-label="Сховати">
             <X size={16} />
           </button>
+        </div>
+      )}
+      {work && (
+        <div className="ai-work" role="status">
+          <span>
+            <LoaderCircle size={14} className="spin" /> {work.step}
+          </span>
+          <div className="search-progress">
+            <div className="bar" style={{ width: `${Math.round((Math.min(work.done, work.total) / Math.max(1, work.total)) * 100)}%` }} />
+          </div>
         </div>
       )}
       <AiPanel ctx={ctx} request={null} onRequestHandled={nothing} quote={null} onQuoteClear={nothing} openThread={thread} onOpenSettings={onOpenSettings} onClose={onClose} />

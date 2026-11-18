@@ -32,12 +32,26 @@ export interface BookRecord {
   reflowPlace?: { unit: number; cfi: string; builtAt: number };
   /** When the book was read to the end (0 or absent: not yet); counts towards the year's goal. */
   finishedAt?: number;
-  /** A web article saved to read later: where it came from. */
+  /** A web article saved to read later, or a book made from a repository: where it came from. */
   sourceUrl?: string;
+  /** A book the app wrote itself from a repository, a pull request or a diff: what it was made of and how. */
+  made?: BookMade;
   /** When the reader last edited the title, author or shelves; the newer edit wins when devices sync. */
   infoAt?: number;
   /** Cached epub.js locations (JSON), so percentages are available instantly on reopen. */
   epubLocations?: string;
+}
+
+export interface BookMade {
+  from: 'github';
+  /** A narrated book, a magazine issue, or the files and diffs as they are. */
+  kind: 'book' | 'magazine' | 'plain';
+  /** "owner/name" and what of it was read: a branch, "PR #12", "main…feature", a commit. */
+  repo: string;
+  what: string;
+  lang: string;
+  /** The model that wrote it; absent for a book made without one. */
+  model?: string;
 }
 
 export interface BookFile {

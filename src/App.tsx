@@ -10,6 +10,7 @@ import { useSettings } from './settings';
 // The study room is a screen of its own; it is loaded when first opened.
 const Study = lazy(() => import('./components/Study').then((m) => ({ default: m.Study })));
 const Stats = lazy(() => import('./components/Stats').then((m) => ({ default: m.Stats })));
+const AgentPage = lazy(() => import('./components/AgentPage').then((m) => ({ default: m.AgentPage })));
 
 const THEME_COLOR = { light: '#ffffff', sepia: '#f8f0dc', dark: '#1c1f25' };
 
@@ -34,6 +35,7 @@ export function App() {
   const bookId = bookFromHash(route);
   const studying = /^#\/(study|review)\b/.test(route);
   const stats = route.startsWith('#/stats');
+  const agent = route.startsWith('#/agent');
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
@@ -55,7 +57,7 @@ export function App() {
   }, []);
 
   // Background sync between devices: on start and whenever a book or the study room is left…
-  const home = !bookId && !studying && !stats;
+  const home = !bookId && !studying && !stats && !agent;
   useEffect(() => {
     if (home) autoSync(true);
   }, [home]);
@@ -113,6 +115,18 @@ export function App() {
         }
       >
         <Stats />
+      </Suspense>
+    );
+  } else if (agent) {
+    screen = (
+      <Suspense
+        fallback={
+          <div className="reader-state">
+            <LoaderCircle size={28} className="spin" />
+          </div>
+        }
+      >
+        <AgentPage onOpenBook={openBook} />
       </Suspense>
     );
   } else if (studying) {

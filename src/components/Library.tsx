@@ -4,7 +4,7 @@ import { BookOpen, Brain, Cloud, CloudDownload, Download, Flame, LoaderCircle, M
 import { db, deleteBook } from '../db';
 import { LIBRARY_CHAT } from '../lib/chats';
 import { durationLabel, lastDays, streaks, useReadingLog } from '../lib/stats';
-import { takeJump } from '../lib/jump';
+import { setJump } from '../lib/jump';
 import { importBooks } from '../lib/library';
 import { autoSync, isBookInStorage, removeLocalCopy, syncConfig, useSyncStatus } from '../lib/sync';
 import { cx, formatBytes } from '../lib/utils';
@@ -17,7 +17,8 @@ import { findUrl } from '../lib/articles';
 import { forgetSearch, LibrarySearch, searchWasOpen } from './LibrarySearch';
 import { SyncDialog } from './SyncDialog';
 
-const LibraryAssistant = lazy(() => import('./LibraryAssistant').then((m) => ({ default: m.LibraryAssistant })));
+// Making a book from a repository is its own piece of the app: loaded when it is first asked for.
+const RepoBookDialog = lazy(() => import('./RepoBookDialog').then((m) => ({ default: m.RepoBookDialog })));
 
 // Phones and tablets do not know the DjVu (and sometimes EPUB) file types and grey such files out
 // in the picker when a filter is set, so there the filter is dropped; the format is checked on import anyway.
@@ -61,11 +62,6 @@ export function Library({ onOpen, onInstall }: Props) {
   const [dragging, setDragging] = useState(false);
   const [aiSettings, setAiSettings] = useState(false);
   const [syncDialog, setSyncDialog] = useState(false);
-  // The assistant that works with the whole library; a saved conversation may be asked for from a book's history.
-  const [assistant, setAssistant] = useState<{ thread: string | null } | null>(() => {
-    const jump = takeJump(LIBRARY_CHAT);
-    return jump ? { thread: jump.thread ?? null } : null;
-  });
   // Back from a book that was opened from the search: the search is still there, with its results.
   const [searching, setSearching] = useState(searchWasOpen);
   useEffect(forgetSearch, []);
@@ -80,6 +76,8 @@ export function Library({ onOpen, onInstall }: Props) {
     history.replaceState(null, '', location.pathname + location.hash);
     return { url: shared };
   });
+  /** The dialog that makes a book from a GitHub repository, with the address it was opened for. */
+  const [repoBook, setRepoBook] = useState<{ address: string | null } | null>(null);
   /** The shelf being looked at; null shows every book. */
   const [shelf, setShelf] = useState<string | null>(null);
   const sync = useSyncStatus();
@@ -208,7 +206,7 @@ export function Library({ onOpen, onInstall }: Props) {
             <Search size={18} />
           </button>
         )}
-        <button className={cx('icon-btn', assistant && 'active')} onClick={() => setAssistant(assistant ? null : { thread: null })} title="AI-помічник: пошук у всіх книгах і налаштування" aria-label="AI-помічник">
+        <button className="icon-btn" onClick={() => (location.hash = '#/agent')} title="Агент: розмова про всю бібліотеку, книжка з GitHub" aria-label="Агент">
           <Sparkles size={18} />
         </button>
         <button
@@ -338,17 +336,12 @@ export function Library({ onOpen, onInstall }: Props) {
           onClose={() => setSearching(false)}
           onOpenAiSettings={() => setAiSettings(true)}
           onOpenAssistant={(thread) => {
-            setSearching(false);
-            setAssistant({ thread });
+            // A conversation held with the agent opens on the agent's page.
+            setJump({ bookId: LIBRARY_CHAT, thread });
+            location.hash = '#/agent';
           }}
         />
       )}
-      {assistant && (
-        <Suspense fallback={null}>
-          <LibraryAssistant thread={assistant.thread} onOpenBook={onOpen} onOpenSettings={() => setAiSettings(true)} onClose={() => setAssistant(null)} />
-        </Suspense>
-      )}
-      {aiSettings && <AiSettings onClose={() => setAiSettings(false)} />}
       {syncDialog && <SyncDialog onClose={() => setSyncDialog(false)} />}
       {removing && <RemoveDialog book={removing} onClose={() => setRemoving(null)} />}
       {adding && (
@@ -358,6 +351,10 @@ export function Library({ onOpen, onInstall }: Props) {
             setAdding(null);
             fileRef.current?.click();
           }}
+          onRepo={(address) => {
+            setAdding(null);
+            setRepoBook({ address });
+          }}
           onSaved={(id) => {
             setAdding(null);
             onOpen(id);
@@ -365,6 +362,21 @@ export function Library({ onOpen, onInstall }: Props) {
           onClose={() => setAdding(null)}
         />
       )}
+      {repoBook && (
+        <Suspense fallback={null}>
+          <RepoBookDialog
+            initialAddress={repoBook.address}
+            onOpenBook={(id) => {
+              setRepoBook(null);
+              onOpen(id);
+            }}
+            onOpenAiSettings={() => setAiSettings(true)}
+            onClose={() => setRepoBook(null)}
+          />
+        </Suspense>
+      )}
+      {/* After the dialogs that can open it, so that it lies over them. */}
+      {aiSettings && <AiSettings onClose={() => setAiSettings(false)} />}
       {editing && <BookInfoDialog book={editing} shelves={shelves.list.map(([name]) => name)} onClose={() => setEditing(null)} />}
     </div>
   );

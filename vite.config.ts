@@ -40,6 +40,53 @@ function devSamples(): Plugin {
 }
 
 /**
+ * Dev only: what the mock model servers answer to the requests of lib/repo-book.ts, so that a book can
+ * be made from a repository without a real model. The plan comes wrapped in prose and a code fence, and
+ * every chapter carries one diagram that does not parse — both on purpose: that is how small models
+ * answer, and the app has to cope. Returns null for any other request.
+ */
+function mockBookAnswer(system: string, user: string): string | null {
+  const uk = /Write in Ukrainian|in Ukrainian;/.test(system);
+  if (system.startsWith('You plan')) {
+    const repoFiles = [...user.matchAll(/^(\S.*?) · [\d.]+ (?:B|KB)$/gm)].map((m) => m[1]);
+    const changed = [...user.matchAll(/^(\S+) · \w+ · \+\d+ −\d+$/gm)].map((m) => m[1]);
+    const files = changed.length ? changed : repoFiles;
+    const count = Math.max(2, Math.min(Number(/(?:Exactly|At most) (\d+) chapters/.exec(system)?.[1] ?? 4), files.length));
+    const chapters = Array.from({ length: count }, (_, i) => ({
+      title: uk ? `Частина ${i + 1}: ${files[i % files.length].split('/').pop()}` : `Part ${i + 1}: ${files[i % files.length].split('/').pop()}`,
+      brief: uk ? 'Що робить ця частина і як вона повʼязана з рештою; діаграма показує потік даних.' : 'What this part does and how it connects to the rest; the diagram shows the data flow.',
+      // One path is given without its folders and one does not exist: the app has to sort that out.
+      files: [files[i % files.length], files[(i + 1) % files.length].split('/').pop(), 'no/such/file.ts'],
+    }));
+    const plan = { title: uk ? 'Як це влаштовано' : 'How it is built', subtitle: uk ? 'Пробна книжка від імітації моделі' : 'A trial book from the mock model', chapters };
+    return 'Here is the plan:\n```json\n' + JSON.stringify(plan, null, 2) + '\n```';
+  }
+  if (system.startsWith('You repair Mermaid')) return 'flowchart TD\n  A["Вхід"] --> B["Обробка"]\n  B --> C["Вихід"]';
+  if (system.startsWith('You write one')) {
+    const title = /Write (?:chapter|article) \d+: "(.+?)"/.exec(user)?.[1] ?? '';
+    const path = /<(?:file|change) path="([^"]+)"/.exec(user)?.[1] ?? 'README.md';
+    const diff = /<change path=/.test(user);
+    return [
+      uk ? `Це пробний текст розділу «${title}». Він написаний імітацією моделі, щоб перевірити, як застосунок складає книжку: абзаци, **виділення**, код у рядку на кшталт \`${path}\`, діаграми й таблиці.` : `This is a trial text of the chapter "${title}", written by the mock model to check how the app puts a book together: paragraphs, **emphasis**, inline code like \`${path}\`, diagrams and tables.`,
+      uk ? '## Як це працює' : '## How it works',
+      uk ? 'Запит проходить кілька кроків: спершу його приймає вхідна точка, далі дані перевіряються, і лише потім зберігаються. Стрілки → показують напрямок.' : 'A request passes several steps: the entry point takes it, the data is checked, and only then stored.',
+      '```mermaid\nflowchart TD\n  A["Запит"] --> B["Перевірка"]\n  B -->|"гаразд"| C["Збереження"]\n  B -->|"помилка"| D["Відмова"]\n```',
+      uk ? '*Шлях запиту від входу до збереження.*' : '*The path of a request from entry to storage.*',
+      diff ? '```diff\n@@ -1,3 +1,4 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = a + b;\n```' : '```ts\nexport function example(input: string): number {\n  // Довгий рядок, щоб перевірити перенесення коду на вузькому екрані та в PDF: він має лишитися читабельним, а не вилізти за край сторінки.\n  return input.length;\n}\n```',
+      uk ? '## Що з чим повʼязано' : '## What connects to what',
+      '| ' + (uk ? 'Частина | Роль' : 'Part | Role') + ' |\n| --- | --- |\n| \`' + path + '\` | ' + (uk ? 'головний файл розділу' : 'the main file of the chapter') + ' |\n| API | ' + (uk ? 'приймає запити' : 'takes requests') + ' |',
+      // A diagram with a mistake in it: the app sends it back to be repaired.
+      '```mermaid\nflowchart TD\n  A[Вхід (сирий)] --> --> B\n```',
+      uk ? '*Спрощена схема після виправлення.*' : '*The simplified scheme after the repair.*',
+      uk ? '> **Варто знати.** Це врізка: число, факт або порада.' : '> **Worth knowing.** This is a sidebar: a number, a fact or a tip.',
+      uk ? '## Головне' : '## Key points',
+      uk ? '- перший висновок\n- другий висновок\n- третій висновок ✓' : '- the first point\n- the second point\n- the third point ✓',
+    ].join('\n\n');
+  }
+  return null;
+}
+
+/**
  * Dev only: a tiny stand-in for the Claude Messages API at /__mock_anthropic, used to exercise the
  * agent loop without a real key. Enable it in the browser console:
  *   localStorage.setItem('zakladka:devApiBase', location.origin + '/__mock_anthropic')
@@ -73,6 +120,8 @@ function mockAnthropic(): Plugin {
           const toolResult = blocks.find((b) => b.type === 'tool_result');
           const empty = String();
 
+          const systemText = typeof body.system === 'string' ? body.system : (body.system ?? []).map((p: { text?: string }) => p.text ?? '').join('');
+          const bookText = body.tools ? null : mockBookAnswer(systemText, blocks.find((b) => b.type === 'text')?.text ?? empty);
           await send('message_start', {
             message: {
               id: 'msg_mock',
@@ -90,7 +139,12 @@ function mockAnthropic(): Plugin {
           await send('content_block_delta', { index: 0, delta: { type: 'signature_delta', signature: 'mock-signature' } });
           await send('content_block_stop', { index: 0 });
 
-          if (toolResult) {
+          if (bookText !== null) {
+            await send('content_block_start', { index: 1, content_block: { type: 'text', text: empty } });
+            for (let i = 0; i < bookText.length; i += 400) res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: bookText.slice(i, i + 400) } })}\n\n`);
+            await send('content_block_stop', { index: 1 });
+            await send('message_delta', { delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 50 } });
+          } else if (toolResult) {
             const shown = typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content).slice(0, 300);
             const answer = `**Результат інструмента** (імітація API):\n\n${shown.slice(0, 1800)}`;
             await send('content_block_start', { index: 1, content_block: { type: 'text', text: empty } });
@@ -179,6 +233,14 @@ function mockOpenAi(): Plugin {
             for (let i = 0; i < answer.length; i += 50) await send({ content: answer.slice(i, i + 50) });
             await send({}, 'stop');
           };
+          const bookText = body.tools ? null : mockBookAnswer(textOf(messages.find((m) => m.role === 'system')), textOf(last));
+          if (bookText !== null) {
+            await send({ role: 'assistant', content: '<think>mock reasoning</think>' });
+            for (let i = 0; i < bookText.length; i += 400) res.write(`data: ${JSON.stringify({ id: 'mock', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: bookText.slice(i, i + 400) }, finish_reason: null }] })}\n\n`);
+            await send({}, 'stop');
+            res.write('data: [DONE]\n\n');
+            return void res.end();
+          }
           await send({ role: 'assistant', content: '<think>mock reasoning</think>' });
           if (last?.role === 'tool' || messages[messages.length - 2]?.role === 'tool') {
             const result = [...messages].reverse().find((m) => m.role === 'tool');
@@ -326,6 +388,12 @@ export default defineConfig({
             urlPattern: /\/pdfjs\/(cmaps|standard_fonts)\//,
             handler: 'CacheFirst',
             options: { cacheName: 'pdfjs-assets', expiration: { maxEntries: 300 } },
+          },
+          {
+            // Fonts for the PDFs the app writes: fetched when the first one is made, then available offline.
+            urlPattern: /\/assets\/DejaVu[^/]+\.ttf$/,
+            handler: 'CacheFirst',
+            options: { cacheName: 'pdf-fonts', expiration: { maxEntries: 8 } },
           },
           {
             // OCR engine (several MB): fetched the first time text is recognised, then available offline.

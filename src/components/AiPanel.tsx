@@ -276,8 +276,8 @@ export function AiPanel({ ctx, request, onRequestHandled, quote, onQuoteClear, o
     if (thread.bookId === bookId) return setWanted({ agentId: thread.agentId, thread: thread.id });
     // A conversation about another book opens in that book.
     setJump({ bookId: thread.bookId, thread: thread.id });
-    // A conversation held in the library opens there.
-    location.hash = thread.bookId === LIBRARY_CHAT ? '' : `#/book/${encodeURIComponent(thread.bookId)}`;
+    // A conversation held with the agent of the whole library opens on its page.
+    location.hash = thread.bookId === LIBRARY_CHAT ? '#/agent' : `#/book/${encodeURIComponent(thread.bookId)}`;
   };
 
   return (

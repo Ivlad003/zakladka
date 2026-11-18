@@ -21,7 +21,7 @@ interface ChatMessage {
   tool_call_id?: string;
 }
 
-interface StreamChunk {
+export interface StreamChunk {
   error?: { message?: string; code?: number | string };
   choices?: {
     finish_reason?: string | null;
@@ -38,7 +38,7 @@ interface StreamChunk {
 const NO_TOOLS = /does not support tools|support tool use|tools? (is|are) not supported|function calling is not|tool calling is not/i;
 
 /** Parses a `text/event-stream` body into JSON payloads. */
-async function* readEvents(res: Response): AsyncGenerator<StreamChunk> {
+export async function* readEvents(res: Response): AsyncGenerator<StreamChunk> {
   if (!res.body) return;
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -72,7 +72,7 @@ async function* readEvents(res: Response): AsyncGenerator<StreamChunk> {
  * Some local reasoning models write their chain of thought into the answer inside <think> tags.
  * Returns the part of the text that is meant for the reader.
  */
-function visibleText(raw: string): string {
+export function visibleText(raw: string): string {
   const trimmed = raw.trimStart();
   if (trimmed.length < 7 && '<think>'.startsWith(trimmed)) return '';
   if (!trimmed.startsWith('<think>')) return raw;
@@ -139,7 +139,7 @@ export function parseWrittenCall(text: string, names: string[]): { name: string;
 
 export async function runOpenAiTurn(opts: RunOptions, provider: OpenAiProvider): Promise<RunResult> {
   const { callbacks: cb, ctx, signal } = opts;
-  const env: ToolEnv = { ctx, readLimit: provider.readLimit };
+  const env: ToolEnv = { ctx, readLimit: provider.readLimit, signal };
   let useTools = provider.tools;
   let toolsUnsupported = false;
   let nudged = false;

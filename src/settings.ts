@@ -134,6 +134,13 @@ export interface Settings {
   studyRetention: number;
   /** Study: how many new cards may be started per day. */
   studyNewPerDay: number;
+  /** A GitHub token for private repositories and a higher request limit; kept on this device only. */
+  githubToken: string;
+  /** Books made from a repository: the choices of the last one, offered again next time. */
+  repoBookKind: 'book' | 'magazine' | 'plain';
+  repoBookSize: 'short' | 'medium' | 'long';
+  /** Language the book is written in (a BCP 47 tag from the list in lib/repo-book). */
+  repoBookLang: string;
 }
 
 export const MODELS: { id: string; name: string; hint: string }[] = [
@@ -222,6 +229,10 @@ const defaults: Settings = {
   syncAuto: true,
   studyRetention: 0.9,
   studyNewPerDay: 15,
+  githubToken: '',
+  repoBookKind: 'book',
+  repoBookSize: 'medium',
+  repoBookLang: 'uk',
 };
 
 export const LOCAL_PRESETS: { name: string; url: string }[] = [

@@ -3511,29 +3511,68 @@ img {
 }
 
 
-/* ---------- The assistant in the library ---------- */
-.library-ai {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 35;
-  width: min(430px, 100vw);
-  height: var(--app-height, 100dvh);
+/* ---------- The agent's page: a conversation about the whole library ---------- */
+.agent-chat {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  width: min(880px, 100%);
+  margin: 0 auto;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  box-shadow: -10px 0 30px rgb(0 0 0 / 0.14);
-  animation: panel-in 0.24s cubic-bezier(0.22, 0.8, 0.24, 1);
+  border-right: 1px solid var(--border);
 }
 
-.library-ai .ai-panel {
+/* The panel was made to stand beside a book or to cover a phone's screen; here it is the page itself. */
+.agent-chat .ai-panel {
   position: static;
   flex: 1;
   width: auto;
+  padding-top: 0;
   border: none;
   animation: none;
+}
+
+/* The page has its own way back. */
+.agent-chat .ai-header > .icon-btn:last-child {
+  display: none;
+}
+
+.agent-chat .ai-offer {
+  padding-top: 8px;
+}
+
+.ai-work {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+
+.ai-work > span {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.ai-work > span svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ai-work .search-progress {
+  margin: 6px 0 0;
+  background: var(--border);
+}
+
+@media (max-width: 900px) {
+  .agent-chat {
+    border: none;
+  }
 }
 
 .ai-offer {
@@ -3561,28 +3600,6 @@ img {
 .ai-offer + .ai-panel {
   padding-top: 0;
 }
-
-@keyframes panel-in {
-  from {
-    transform: translateX(24px);
-    opacity: 0;
-  }
-}
-
-@media (max-width: 900px) {
-  .library-ai {
-    width: 100vw;
-    border: none;
-    animation: sheet-up 0.28s cubic-bezier(0.22, 0.8, 0.24, 1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .library-ai {
-    animation: none;
-  }
-}
-
 
 /* ---------- Reading aloud ---------- */
 .aloud-bar {
@@ -4376,4 +4393,138 @@ button.add-choice:hover:not(:disabled) {
 .article-form input {
   flex: 1;
   min-width: 0;
+}
+
+/* ---------- A book made from a repository ---------- */
+.repo-book {
+  width: min(600px, 100%);
+}
+
+.repo-find {
+  display: flex;
+  gap: 6px;
+}
+
+.repo-find input {
+  flex: 1;
+  min-width: 0;
+}
+
+.repo-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.repo-card > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.repo-card > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.repo-card strong {
+  overflow-wrap: anywhere;
+}
+
+.repo-card small svg {
+  vertical-align: -1px;
+}
+
+.repo-book .segmented.wide button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.repo-book .field.column select,
+.repo-book .field.column input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* A pull request: the list takes the room, the number is a short field beside it. */
+.repo-book .field-pair:has(.repo-number) {
+  grid-template-columns: minmax(0, 1fr) 96px;
+}
+
+.repo-book .field-pair:has(.repo-number:only-child) {
+  grid-template-columns: 140px;
+}
+
+.repo-book .notice {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  width: auto;
+  margin: 0;
+  font-size: 13px;
+}
+
+.repo-token input {
+  width: 100%;
+}
+
+.repo-progress {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+.repo-progress > span {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.repo-progress > span svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.repo-progress .search-progress {
+  margin: 6px 0 0;
+}
+
+.repo-done {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.repo-done > div,
+.book-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Marks the end of the dialog for scrolling to; takes no room of its own. */
+.repo-end {
+  margin-top: -12px;
+}
+
+/* The agent's page has room for its name even on a phone: its bar holds one button, not a row of them. */
+@media (max-width: 520px) {
+  .agent-page .brand div {
+    display: flex;
+  }
+
+  .agent-page .brand small {
+    display: none;
+  }
 }

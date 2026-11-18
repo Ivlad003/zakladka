@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import type { Engine } from '../engines/types';
 import { db } from '../db';
+import { getRepo, listBranches, listPulls, parseRepoAddress, splitRefPath, type RepoTarget } from '../lib/github';
 import { ensureBookText, indexedBooks, searchBookText, searchByMeaning } from '../lib/library-search';
+import { BOOK_LANGS } from '../lib/repo-book-words';
 import { getEmbedder } from '../lib/semantic';
 import type { StudyApi } from '../lib/study';
-import { syncConfig, testConnection } from '../lib/sync';
+import { autoSync, syncConfig, testConnection } from '../lib/sync';
 import { readWebPage, webSearch } from '../lib/websearch';
 import { getSettings, updateSettings, type Settings } from '../settings';
 import { listLocalModels } from './providers';
@@ -37,6 +39,8 @@ export interface AgentContext {
   noBook?: boolean;
   /** Library only: shows the reader a button that opens a book, optionally at a place. */
   offerBook?(book: BookRecord, unit?: number, passage?: string): void;
+  /** Library only: shows how a long job of a tool (writing a book) is getting on; null when it is over. */
+  showWork?(work: { step: string; done: number; total: number } | null): void;
 }
 
 /** Per-provider limits that shape what the tools return. */
@@ -44,6 +48,8 @@ export interface ToolEnv {
   ctx: AgentContext;
   /** Most characters of book text one `read_book_text` call may return. */
   readLimit: number;
+  /** Aborted when the reader stops the answer: a tool that works for minutes has to stop with it. */
+  signal?: AbortSignal;
 }
 
 export interface ToolOutput {
@@ -201,7 +207,7 @@ const SETTABLE: Record<string, z.ZodType> = {
   studyRetention: num(0.7, 0.97),
   studyNewPerDay: z.preprocess(numeric, z.number().int().min(1).max(200)),
 };
-const SECRET_SETTINGS = ['apiKey', 'openrouterKey', 'localApiKey', 'embedApiKey', 's3AccessKey', 's3SecretKey'] as const;
+const SECRET_SETTINGS = ['apiKey', 'openrouterKey', 'localApiKey', 'embedApiKey', 's3AccessKey', 's3SecretKey', 'githubToken'] as const;
 
 // Declared once and never reordered: for Claude the tool list is part of the cached prompt prefix.
 const TOOLS: ToolSpec[] = [
@@ -876,17 +882,119 @@ const TOOLS: ToolSpec[] = [
       return result.ok ? (result.bucketExists ? 'The storage answers and the bucket exists.' : 'The storage answers, but the bucket does not exist yet; it can be created in the sync dialog.') : `Connection failed: ${result.error}`;
     },
   }),
+
+  // ---- Books made from GitHub (the agent page; lib/repo-book.ts does the work) ----
+  tool({
+    name: 'github_repository',
+    description: () =>
+      'Looks at a repository on GitHub: what it is, its branches and its recent pull requests. Use it to check that a repository exists and to see what a book could be made of. Public repositories always work; private ones work when the reader has added a GitHub token (the "Книжка з GitHub" button, "Токен GitHub").',
+    parameters: { type: 'object', properties: { repository: { type: 'string', description: '"owner/name", or any address of the repository on github.com.' } }, required: ['repository'] },
+    schema: z.object({ repository: z.string().min(3) }),
+    label: (input) => `Дивлюся репозиторій ${input.repository.replace(/^https?:\/\/(www\.)?github\.com\//i, '').slice(0, 40)}`,
+    async run(input, { signal }) {
+      const address = parseRepoAddress(input.repository);
+      if (!address) return 'That is not a GitHub repository: give "owner/name" or an address on github.com.';
+      const repo = await getRepo(address.owner, address.name, signal);
+      const [branches, pulls] = await Promise.all([listBranches(repo, signal), listPulls(repo, signal).catch(() => [])]);
+      return [
+        `${repo.fullName}${repo.isPrivate ? ' (private)' : ''}: ${repo.description || 'no description'}`,
+        `Main language: ${repo.language || 'unknown'}; license: ${repo.license || 'none stated'}; stars: ${repo.stars}.`,
+        `Default branch: ${repo.defaultBranch}. Branches (${branches.length}): ${branches.slice(0, 40).join(', ')}${branches.length > 40 ? ', …' : ''}`,
+        pulls.length ? `Recent pull requests:\n${pulls.slice(0, 20).map((p) => `#${p.number} [${p.draft ? 'draft' : p.state}] ${p.title} (${p.base} ← ${p.head}, by ${p.author})`).join('\n')}` : 'No pull requests.',
+      ].join('\n');
+    },
+  }),
+
+  tool({
+    name: 'make_book_from_github',
+    description: () =>
+      'Makes a book for the reader out of a GitHub repository, a pull request, the difference between two branches, or one commit, and puts it into their library (the shelf "Репозиторії"). Kinds: "book" — chapters that explain the code, with diagrams, written by the model the reader has set up; "magazine" — the same as a livelier magazine issue; "plain" — the files or the diffs themselves as pages, with no model involved. It works for several seconds ("plain") to several minutes (a written book): call it once and wait for the result. When it is done the reader sees a button that opens the book. If the reader has not said which repository, ask; choose the rest from what they asked for. Do not call it again for the same request because the answer took long.',
+    parameters: {
+      type: 'object',
+      properties: {
+        repository: { type: 'string', description: '"owner/name" or an address on github.com. An address of a pull request, of a comparison, of a commit or of a branch already says what to read.' },
+        pull_request: { type: 'integer', description: 'Number of a pull request: the book is then about its changes, not about the whole repository.' },
+        base: { type: 'string', description: 'Together with "head": the book is about what the branch "head" has that the branch "base" has not.' },
+        head: { type: 'string', description: 'The branch with the changes; see "base".' },
+        branch: { type: 'string', description: 'Which branch of the repository to read; its default branch when left out.' },
+        folder: { type: 'string', description: 'Only this folder of the repository, for instance "src/lib".' },
+        kind: { type: 'string', enum: ['book', 'magazine', 'plain'], description: 'Left out: what the reader chose last time.' },
+        size: { type: 'string', enum: ['short', 'medium', 'long'], description: 'short — about 4 chapters, ten minutes of reading; medium — 7 chapters; long — 12 chapters, about an hour. Left out: what the reader chose last time.' },
+        language: { type: 'string', enum: BOOK_LANGS.map((l) => l.id), description: `Language the book is written in: ${BOOK_LANGS.map((l) => `${l.id} — ${l.english}`).join(', ')}. Left out: what the reader chose last time.` },
+      },
+      required: ['repository'],
+    },
+    schema: z.object({
+      repository: z.string().min(3),
+      pull_request: optionalInt(),
+      base: optionalText(),
+      head: optionalText(),
+      branch: optionalText(),
+      folder: optionalText(),
+      kind: z.preprocess(blankToUndefined, z.enum(['book', 'magazine', 'plain']).optional()),
+      size: z.preprocess(blankToUndefined, z.enum(['short', 'medium', 'long']).optional()),
+      language: optionalText(),
+    }),
+    label: (input) => `Складаю книжку з ${input.repository.replace(/^https?:\/\/(www\.)?github\.com\//i, '').slice(0, 40)} — це може тривати кілька хвилин`,
+    async run(input, { ctx, signal }) {
+      const address = parseRepoAddress(input.repository);
+      if (!address) return 'That is not a GitHub repository: give "owner/name" or an address on github.com.';
+      const repo = await getRepo(address.owner, address.name, signal);
+      const hint = address.hint;
+      let target: RepoTarget;
+      if (input.pull_request) target = { type: 'pull', number: input.pull_request };
+      else if (input.base && input.head) target = { type: 'compare', base: input.base, head: input.head };
+      else if (hint?.type === 'pull') target = { type: 'pull', number: hint.number };
+      else if (hint?.type === 'compare') target = { type: 'compare', base: hint.base, head: hint.head };
+      else if (hint?.type === 'commit') target = { type: 'commit', sha: hint.sha };
+      else {
+        const where = hint?.type === 'tree' && !input.branch ? splitRefPath(hint.refPath, await listBranches(repo, signal)) : { ref: input.branch || repo.defaultBranch, path: '' };
+        target = { type: 'repo', ref: where.ref, path: input.folder ?? where.path };
+      }
+      const s = getSettings();
+      const kind = input.kind ?? s.repoBookKind;
+      const size = input.size ?? s.repoBookSize;
+      const lang = BOOK_LANGS.some((l) => l.id === input.language) ? input.language! : s.repoBookLang;
+      // The machinery that writes a book is loaded when the first one is asked for.
+      const { makeRepoBook, newDraft, REPO_SHELF } = await import('../lib/repo-book');
+      let id: string;
+      try {
+        id = await makeRepoBook({ repo, target, kind, size, lang }, newDraft(), (work) => ctx.showWork?.(work), signal ?? new AbortController().signal);
+      } finally {
+        ctx.showWork?.(null);
+      }
+      const book = await db.books.get(id);
+      if (!book) return 'The book was made but could not be found in the library afterwards.';
+      ctx.offerBook?.(book);
+      autoSync(true);
+      return `Done: the book "${book.title}" about ${repo.fullName} (${book.made?.what ?? ''}; ${book.unitCount} sections) is in the reader's library, on the shelf "${REPO_SHELF}". The reader now sees a button that opens it. Tell them briefly that it is ready and what it is called; it can also be downloaded as EPUB or PDF — the pencil button on the book's card in the library.`;
+    },
+  }),
 ];
 
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
 /** Tools that need no open book: the assistant in the library is offered only these. */
-const ANYWHERE = new Set(['list_library_books', 'search_library', 'open_book', 'web_search', 'read_web_page', 'get_app_settings', 'update_app_settings', 'list_models_on_server', 'check_sync_storage']);
+const ANYWHERE = new Set([
+  'list_library_books',
+  'search_library',
+  'open_book',
+  'web_search',
+  'read_web_page',
+  'get_app_settings',
+  'update_app_settings',
+  'list_models_on_server',
+  'check_sync_storage',
+  'github_repository',
+  'make_book_from_github',
+]);
+/** Tools that make sense only where no book is open. */
+const LIBRARY_ONLY = new Set(['open_book', 'github_repository', 'make_book_from_github']);
 
 /** The tools to offer. `vision: false` leaves out the one that returns images; `noBook` leaves only those that work in the library. */
 export function getTools(options: { vision: boolean; noBook?: boolean }): ToolSpec[] {
   if (options.noBook) return TOOLS.filter((t) => ANYWHERE.has(t.name));
-  return TOOLS.filter((t) => t.name !== 'open_book' && (options.vision || t.name !== 'view_page'));
+  return TOOLS.filter((t) => !LIBRARY_ONLY.has(t.name) && (options.vision || t.name !== 'view_page'));
 }
 
 export interface ToolCallResult {

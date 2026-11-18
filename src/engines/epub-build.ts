@@ -25,6 +25,8 @@ export interface EpubParts {
   /** File name of the cover among `images`. */
   cover?: string;
   toc: EpubToc[];
+  /** Heading of the contents page; "Зміст" when not given. */
+  tocTitle?: string;
 }
 
 const page = (title: string, lang: string, body: string) =>
@@ -64,7 +66,7 @@ export async function buildEpub(parts: EpubParts): Promise<Blob> {
   if (open) nav.push('</li>', ...Array.from({ length: open - 1 }, () => '</ol></li>'), '</ol>');
   zip.file(
     'OEBPS/nav.xhtml',
-    page(title, lang, `<nav epub:type="toc" id="toc"><h1>Зміст</h1>\n${nav.join('\n') || `<ol><li><a href="${files[0].name}">${escapeXml(title)}</a></li></ol>`}\n</nav>`),
+    page(title, lang, `<nav epub:type="toc" id="toc"><h1>${escapeXml(parts.tocTitle ?? 'Зміст')}</h1>\n${nav.join('\n') || `<ol><li><a href="${files[0].name}">${escapeXml(title)}</a></li></ol>`}\n</nav>`),
     { date },
   );
 

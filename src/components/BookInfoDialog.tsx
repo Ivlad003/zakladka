@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Download, LoaderCircle, Plus, X } from 'lucide-react';
 import { db } from '../db';
+import { downloadBookFile, downloadBookPdf } from '../lib/book-export';
 import { autoSync } from '../lib/sync';
 import { markFinished } from '../lib/stats';
 import { cx } from '../lib/utils';
@@ -20,7 +21,22 @@ export function BookInfoDialog({ book, shelves, onClose }: Props) {
   const [tags, setTags] = useState<string[]>(book.tags ?? []);
   const [fresh, setFresh] = useState('');
   const [finished, setFinished] = useState(Boolean(book.finishedAt));
-  const known = [...new Set([...shelves, ...tags])].sort((a, b) => a.localeCompare(b, 'uk'));
+  /** A file being prepared for download, and what went wrong with the last one. */
+  const [saving, setSaving] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const download = async (pdf: boolean) => {
+    setSaveError(null);
+    setSaving(pdf ? 'Готую PDF…' : 'Готую файл…');
+    try {
+      if (pdf) await downloadBookPdf(book, setSaving);
+      else await downloadBookFile(book);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(null);
+    }
+  };
+  const known =[...new Set([...shelves, ...tags])].sort((a, b) => a.localeCompare(b, 'uk'));
 
   const toggle = (name: string) => setTags((now) => (now.includes(name) ? now.filter((t) => t !== name) : [...now, name]));
   const addShelf = () => {
@@ -88,15 +104,31 @@ export function BookInfoDialog({ book, shelves, onClose }: Props) {
         </label>
         {book.sourceUrl && (
           <small className="muted">
-            Стаття з{' '}
+            {book.made ? 'Складено з ' : 'Стаття з '}
             <a href={book.sourceUrl} target="_blank" rel="noreferrer">
-              {new URL(book.sourceUrl).hostname.replace(/^www\./, '')}
+              {book.made ? `${book.made.repo} (${book.made.what})` : new URL(book.sourceUrl).hostname.replace(/^www\./, '')}
             </a>
+            {book.made?.model ? ` · писала модель ${book.made.model}` : book.made ? ' · без AI' : ''}
           </small>
         )}
         <small className="muted">
           Файл: {book.fileName} · {book.format.toUpperCase()}
         </small>
+        {!book.cloudOnly && (
+          <div className="book-downloads">
+            <button type="button" className="btn small" onClick={() => void download(false)} disabled={Boolean(saving)}>
+              <Download size={14} /> Завантажити {book.format.toUpperCase()}
+            </button>
+            {/* A PDF is laid out only from books the app composed itself: their pages are known to it. */}
+            {book.made && book.format === 'epub' && (
+              <button type="button" className="btn small" onClick={() => void download(true)} disabled={Boolean(saving)}>
+                {saving ? <LoaderCircle size={14} className="spin" /> : <Download size={14} />} Завантажити PDF
+              </button>
+            )}
+            {saving && <small className="muted">{saving}</small>}
+            {saveError && <small className="error-text">{saveError}</small>}
+          </div>
+        )}
         <footer className="modal-footer">
           <span className="spacer" />
           <button className="btn" onClick={onClose}>
