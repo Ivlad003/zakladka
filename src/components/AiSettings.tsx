@@ -6,6 +6,7 @@ import { isBlockedMixedContent, isOpenRouter, listLocalModels, listOpenRouterMod
 import { BROWSER_MODELS, canRun, deleteBrowserModel, findBrowserModel, isModelDownloaded, loadBrowserModel, useBrowserModel, webGpuAvailable } from '../ai/browser-llm';
 import { DEFAULT_BROWSER_MODEL } from '../lib/semantic';
 import { cx, timeoutSignal, uid } from '../lib/utils';
+import { GithubTokenField } from './GithubTokenField';
 import { voiceTypingSupported } from './MicButton';
 import {
   LOCAL_PRESETS,
@@ -66,6 +67,7 @@ export function AiSettings({ onClose }: { onClose(): void }) {
       embedBaseUrl: draft.embedBaseUrl.trim(),
       embedModel: draft.embedModel.trim(),
       searxngUrl: trimUrl(draft.searxngUrl),
+      githubToken: draft.githubToken.trim(),
       // Edited elsewhere and may have changed while this dialog was open.
       theme: getSettings().theme,
       ...syncFields(getSettings()),
@@ -149,6 +151,9 @@ export function AiSettings({ onClose }: { onClose(): void }) {
         </label>
 
         <EmbeddingSection draft={draft} set={set} />
+
+        {/* Not a model's key, but it lives here with the other keys: books made from GitHub repositories use it. */}
+        <GithubTokenField value={draft.githubToken} onChange={(githubToken) => set({ githubToken })} />
 
         <p className="muted small">
           Агенти читають текст відкритої книги та ваші нотатки, щоб відповідати. Ці фрагменти надсилаються обраному провайдеру разом із запитанням; з

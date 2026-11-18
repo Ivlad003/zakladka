@@ -25,6 +25,7 @@ export interface BookWords {
   /** Cover labels of the three kinds. */
   book: string;
   magazine: string;
+  article: string;
   plain: string;
   /** Titles of the pages the app composes. */
   aboutRepo: string;
@@ -67,6 +68,7 @@ const WORDS: Record<string, BookWords> = {
     chapter: 'Розділ',
     book: 'Книжка про код',
     magazine: 'Журнал про код',
+    article: 'Стаття про код',
     plain: 'Код як є',
     aboutRepo: 'Про репозиторій',
     aboutChanges: 'Про ці зміни',
@@ -104,6 +106,7 @@ const WORDS: Record<string, BookWords> = {
     chapter: 'Chapter',
     book: 'A book about the code',
     magazine: 'A magazine about the code',
+    article: 'An article about the code',
     plain: 'The code as it is',
     aboutRepo: 'About the repository',
     aboutChanges: 'About these changes',
@@ -141,6 +144,7 @@ const WORDS: Record<string, BookWords> = {
     chapter: 'Rozdział',
     book: 'Książka o kodzie',
     magazine: 'Magazyn o kodzie',
+    article: 'Artykuł o kodzie',
     plain: 'Kod taki, jaki jest',
     aboutRepo: 'O repozytorium',
     aboutChanges: 'O tych zmianach',
@@ -178,6 +182,7 @@ const WORDS: Record<string, BookWords> = {
     chapter: 'Kapitel',
     book: 'Ein Buch über den Code',
     magazine: 'Ein Magazin über den Code',
+    article: 'Ein Artikel über den Code',
     plain: 'Der Code, wie er ist',
     aboutRepo: 'Über das Repository',
     aboutChanges: 'Über diese Änderungen',
@@ -215,6 +220,7 @@ const WORDS: Record<string, BookWords> = {
     chapter: 'Capítulo',
     book: 'Un libro sobre el código',
     magazine: 'Una revista sobre el código',
+    article: 'Un artículo sobre el código',
     plain: 'El código tal cual',
     aboutRepo: 'Sobre el repositorio',
     aboutChanges: 'Sobre estos cambios',
@@ -252,6 +258,7 @@ const WORDS: Record<string, BookWords> = {
     chapter: 'Chapitre',
     book: 'Un livre sur le code',
     magazine: 'Un magazine sur le code',
+    article: 'Un article sur le code',
     plain: 'Le code tel quel',
     aboutRepo: 'À propos du dépôt',
     aboutChanges: 'À propos de ces changements',

@@ -9,6 +9,7 @@ import { BOOK_LANGS } from '../lib/repo-book-words';
 import { autoSync } from '../lib/sync';
 import { cx, pluralUk } from '../lib/utils';
 import { updateSettings, useSettings } from '../settings';
+import { GithubTokenField } from './GithubTokenField';
 
 interface Props {
   /** An address to start from (pasted into "Add", dropped on the library). */
@@ -23,6 +24,7 @@ type Mode = RepoTarget['type'];
 const KINDS: { id: BookKind; name: string; about: string }[] = [
   { id: 'book', name: 'Книжка', about: 'Модель пояснює по розділах: що це за проєкт, як він влаштований і як працює — з діаграмами та уривками коду.' },
   { id: 'magazine', name: 'Журнал', about: 'Номер журналу: головна тема, статті про окремі частини, врізки й діаграми. Легше й жвавіше за книжку.' },
+  { id: 'article', name: 'Стаття', about: 'Одна стаття з діаграмою про найголовніше: що це за проєкт або що змінює цей діф. Найшвидший варіант — модель пише її за один запит.' },
   { id: 'plain', name: 'Код як є', about: 'Без AI: файли й діфи стають сторінками книжки, README — з картинками, зміст — за теками.' },
 ];
 const SIZES: BookSize[] = ['short', 'medium', 'long'];
@@ -47,7 +49,6 @@ export function RepoBookDialog({ initialAddress, onOpenBook, onOpenAiSettings, o
   const [progress, setProgress] = useState<BookProgress | null>(null);
   const [madeId, setMadeId] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
-  const [token, setToken] = useState(settings.githubToken);
   const stop = useRef<AbortController | null>(null);
   const draft = useRef(newDraft());
   const inputRef = useRef<HTMLInputElement>(null);
@@ -178,7 +179,9 @@ export function RepoBookDialog({ initialAddress, onOpenBook, onOpenAiSettings, o
       ? mode === 'repo'
         ? `До ${Math.round(BOOK_SIZES[size].plainChars / 1800 / 10) * 10} сторінок коду: найважливіші файли, скільки вміститься.`
         : 'Розмір визначає, скільки змін показати повністю.'
-      : `До ${chapters} ${pluralUk(chapters, 'розділу', 'розділів', 'розділів')}, близько ${readingMinutes(size)} хв читання. Це ${chapters + 1} ${pluralUk(chapters + 1, 'запит', 'запити', 'запитів')} до моделі${mode === 'repo' ? '' : ' (для невеликих змін — менше)'}.`;
+      : kind === 'article'
+        ? `Близько ${readingMinutes(kind, size)} хв читання. Один запит до моделі.`
+        : `До ${chapters} ${pluralUk(chapters, 'розділу', 'розділів', 'розділів')}, близько ${readingMinutes(kind, size)} хв читання. Це ${chapters + 1} ${pluralUk(chapters + 1, 'запит', 'запити', 'запитів')} до моделі${mode === 'repo' ? '' : ' (для невеликих змін — менше)'}.`;
   const wide = progress ? Math.round((Math.min(progress.done, progress.total) / Math.max(1, progress.total)) * 100) : 0;
   const pullKnown = pulls.some((p) => String(p.number) === pull);
 
@@ -217,25 +220,18 @@ export function RepoBookDialog({ initialAddress, onOpenBook, onOpenAiSettings, o
         </form>
         {!repo && !finding && <p className="muted small">Підійде посилання на репозиторій, гілку чи теку, pull request, порівняння гілок або окремий коміт.</p>}
 
-        <details className="help repo-token">
+        <details
+          className="help repo-token"
+          onToggle={(e) => {
+            // Opened under a keyboard or at the bottom of a sheet, the field has to come into view.
+            const el = e.currentTarget;
+            if (el.open) setTimeout(() => el.scrollIntoView({ block: 'nearest' }), 50);
+          }}
+        >
           <summary>Приватний репозиторій або бракує запитів? Додайте токен GitHub{settings.githubToken ? ' (додано)' : ''}</summary>
-          <label className="field column">
-            <span>Токен GitHub</span>
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              onBlur={() => updateSettings({ githubToken: token.trim() })}
-              placeholder="github_pat_…"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={busy}
-            />
-          </label>
-          <small className="muted">
-            Без токена GitHub дає 60 запитів на годину й показує лише відкриті репозиторії; з токеном — 5000 і ваші приватні. Досить токена лише для читання (Contents і Pull requests — Read-only). Він зберігається тільки в цьому браузері й
-            надсилається лише на api.github.com.
-          </small>
+          {/* Kept in the settings at once, so the same token shows in the AI settings too. */}
+          <GithubTokenField value={settings.githubToken} onChange={(githubToken) => updateSettings({ githubToken })} disabled={busy} />
+          <small className="muted">Те саме поле є в налаштуваннях AI.</small>
         </details>
 
         {repo && (
@@ -267,14 +263,13 @@ export function RepoBookDialog({ initialAddress, onOpenBook, onOpenAiSettings, o
                   <GitPullRequest size={14} /> Pull request
                 </button>
                 <button type="button" role="tab" aria-selected={mode === 'compare'} className={cx(mode === 'compare' && 'active')} onClick={() => setMode('compare')} disabled={busy}>
-                  <GitCompare size={14} /> Дві гілки
+                  <GitCompare size={14} /> Діф гілок
                 </button>
-                {(mode === 'commit' || sha) && (
-                  <button type="button" role="tab" aria-selected={mode === 'commit'} className={cx(mode === 'commit' && 'active')} onClick={() => setMode('commit')} disabled={busy}>
-                    <GitCommitHorizontal size={14} /> Коміт
-                  </button>
-                )}
+                <button type="button" role="tab" aria-selected={mode === 'commit'} className={cx(mode === 'commit' && 'active')} onClick={() => setMode('commit')} disabled={busy}>
+                  <GitCommitHorizontal size={14} /> Коміт
+                </button>
               </div>
+              {mode !== 'repo' && <small className="muted">Про зміни можна зробити і книжку, і журнал, і одну статтю; «Код як є» покаже самі діфи.</small>}
             </div>
 
             {mode === 'repo' && (
@@ -343,7 +338,7 @@ export function RepoBookDialog({ initialAddress, onOpenBook, onOpenAiSettings, o
                     </select>
                   </label>
                 </div>
-                <small className="muted">{base === head ? 'Оберіть дві різні гілки.' : `Книжка буде про те, що є в «${head}» і чого немає в «${base}».`}</small>
+                <small className="muted">{base === head ? 'Оберіть дві різні гілки.' : `Ітиметься про те, що є в «${head}» і чого немає в «${base}».`}</small>
               </>
             )}
             {mode === 'commit' && (
@@ -429,7 +424,7 @@ export function RepoBookDialog({ initialAddress, onOpenBook, onOpenAiSettings, o
         )}
         {madeId && !busy && (
           <div className="repo-done">
-            <strong>Готово: книжка стоїть на полиці «{REPO_SHELF}».</strong>
+            <strong>Готово: тепер це на полиці «{REPO_SHELF}».</strong>
             <div>
               <button className="btn primary" onClick={() => onOpenBook(madeId)}>
                 <BookOpen size={16} /> Читати
@@ -458,7 +453,7 @@ export function RepoBookDialog({ initialAddress, onOpenBook, onOpenAiSettings, o
                   {madeId ? 'Закрити' : 'Скасувати'}
                 </button>
                 <button className={cx('btn', !madeId && 'primary')} onClick={() => void make()} disabled={!ready}>
-                  {draft.current.chapters.size > 0 ? 'Продовжити' : madeId ? 'Зробити ще одну' : kind === 'magazine' ? 'Створити журнал' : 'Створити книжку'}
+                  {draft.current.chapters.size > 0 ? 'Продовжити' : madeId ? 'Зробити ще' : kind === 'magazine' ? 'Створити журнал' : kind === 'article' ? 'Написати статтю' : 'Створити книжку'}
                 </button>
               </>
             )}

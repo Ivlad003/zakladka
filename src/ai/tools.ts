@@ -908,7 +908,7 @@ const TOOLS: ToolSpec[] = [
   tool({
     name: 'make_book_from_github',
     description: () =>
-      'Makes a book for the reader out of a GitHub repository, a pull request, the difference between two branches, or one commit, and puts it into their library (the shelf "Репозиторії"). Kinds: "book" — chapters that explain the code, with diagrams, written by the model the reader has set up; "magazine" — the same as a livelier magazine issue; "plain" — the files or the diffs themselves as pages, with no model involved. It works for several seconds ("plain") to several minutes (a written book): call it once and wait for the result. When it is done the reader sees a button that opens the book. If the reader has not said which repository, ask; choose the rest from what they asked for. Do not call it again for the same request because the answer took long.',
+      'Makes a book for the reader out of a GitHub repository, a pull request, the difference between two branches, or one commit, and puts it into their library (the shelf "Репозиторії"). Kinds: "book" — chapters that explain the code, with diagrams, written by the model the reader has set up; "magazine" — the same as a livelier magazine issue; "article" — one article about the most important of it, written in a single request; "plain" — the files or the diffs themselves as pages, with no model involved. It works for several seconds ("plain") to several minutes (a written book): call it once and wait for the result. When it is done the reader sees a button that opens the book. If the reader has not said which repository, ask; choose the rest from what they asked for. Do not call it again for the same request because the answer took long.',
     parameters: {
       type: 'object',
       properties: {
@@ -918,8 +918,8 @@ const TOOLS: ToolSpec[] = [
         head: { type: 'string', description: 'The branch with the changes; see "base".' },
         branch: { type: 'string', description: 'Which branch of the repository to read; its default branch when left out.' },
         folder: { type: 'string', description: 'Only this folder of the repository, for instance "src/lib".' },
-        kind: { type: 'string', enum: ['book', 'magazine', 'plain'], description: 'Left out: what the reader chose last time.' },
-        size: { type: 'string', enum: ['short', 'medium', 'long'], description: 'short — about 4 chapters, ten minutes of reading; medium — 7 chapters; long — 12 chapters, about an hour. Left out: what the reader chose last time.' },
+        kind: { type: 'string', enum: ['book', 'magazine', 'article', 'plain'], description: 'Left out: what the reader chose last time.' },
+        size: { type: 'string', enum: ['short', 'medium', 'long'], description: 'short — about 4 chapters, ten minutes of reading; medium — 7 chapters; long — 12 chapters, about an hour; for an article — how long it is (3, 6 or 9 minutes). Left out: what the reader chose last time.' },
         language: { type: 'string', enum: BOOK_LANGS.map((l) => l.id), description: `Language the book is written in: ${BOOK_LANGS.map((l) => `${l.id} — ${l.english}`).join(', ')}. Left out: what the reader chose last time.` },
       },
       required: ['repository'],
@@ -931,7 +931,7 @@ const TOOLS: ToolSpec[] = [
       head: optionalText(),
       branch: optionalText(),
       folder: optionalText(),
-      kind: z.preprocess(blankToUndefined, z.enum(['book', 'magazine', 'plain']).optional()),
+      kind: z.preprocess(blankToUndefined, z.enum(['book', 'magazine', 'article', 'plain']).optional()),
       size: z.preprocess(blankToUndefined, z.enum(['short', 'medium', 'long']).optional()),
       language: optionalText(),
     }),

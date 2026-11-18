@@ -2053,6 +2053,14 @@ body {
   overflow: hidden;
 }
 
+/* Dialogs are fixed to the screen, not to #root, so they have to follow the visible height themselves.
+   On an iPhone the keyboard is laid over the page and the page is not allowed to scroll: a bottom
+   sheet with a field in it (a short one most of all) would otherwise stay behind the keyboard. */
+.modal-backdrop {
+  bottom: auto;
+  height: var(--app-height, 100%);
+}
+
 img {
   -webkit-user-drag: none;
 }
@@ -4527,4 +4535,20 @@ button.add-choice:hover:not(:disabled) {
   .agent-page .brand small {
     display: none;
   }
+}
+
+/* A key with the buttons that go with it: paste from the clipboard, clear. */
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.key-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-row .btn {
+  flex-shrink: 0;
 }

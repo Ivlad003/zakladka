@@ -18,23 +18,25 @@ import { importBooks } from './library';
 import { bookLang, bookWords, type BookWords } from './repo-book-words';
 import { escapeRegExp, timeoutSignal } from './utils';
 
-export type BookKind = 'book' | 'magazine' | 'plain';
+/** A book, a magazine issue and a single article are written by a model; "plain" is the code as it is. */
+export type BookKind = 'book' | 'magazine' | 'article' | 'plain';
 export type BookSize = 'short' | 'medium' | 'long';
 
 export const REPO_SHELF = 'Репозиторії';
 
 /**
- * How large a book of each size is: chapters and words per chapter for a written one, characters of
- * source for the code as it is, characters of diffs shown in full.
+ * How large a book of each size is: chapters and words per chapter for a written one, words of a
+ * single article, characters of source for the code as it is, characters of diffs shown in full.
  */
-export const BOOK_SIZES: Record<BookSize, { name: string; chapters: number; words: number; plainChars: number; patchChars: number }> = {
-  short: { name: 'Коротка', chapters: 4, words: 450, plainChars: 150_000, patchChars: 40_000 },
-  medium: { name: 'Середня', chapters: 7, words: 700, plainChars: 500_000, patchChars: 150_000 },
-  long: { name: 'Докладна', chapters: 12, words: 1000, plainChars: 1_500_000, patchChars: 500_000 },
+export const BOOK_SIZES: Record<BookSize, { name: string; chapters: number; words: number; articleWords: number; plainChars: number; patchChars: number }> = {
+  short: { name: 'Коротка', chapters: 4, words: 450, articleWords: 600, plainChars: 150_000, patchChars: 40_000 },
+  medium: { name: 'Середня', chapters: 7, words: 700, articleWords: 1000, plainChars: 500_000, patchChars: 150_000 },
+  long: { name: 'Докладна', chapters: 12, words: 1000, articleWords: 1600, plainChars: 1_500_000, patchChars: 500_000 },
 };
 
-/** Minutes a written book of this size takes to read; text with code in it reads slower than prose. */
-export const readingMinutes = (size: BookSize): number => Math.round((BOOK_SIZES[size].chapters * BOOK_SIZES[size].words) / 180 / 5) * 5;
+/** Minutes a written book or article of this size takes to read; text with code in it reads slower than prose. */
+export const readingMinutes = (kind: BookKind, size: BookSize): number =>
+  kind === 'article' ? Math.round(BOOK_SIZES[size].articleWords / 180) : Math.round((BOOK_SIZES[size].chapters * BOOK_SIZES[size].words) / 180 / 5) * 5;
 
 export interface BookRequest {
   repo: RepoInfo;
@@ -190,20 +192,25 @@ ${shape}
 }
 
 function chapterSystem(req: BookRequest, change: ChangeSet | null): string {
-  const magazine = req.kind === 'magazine';
+  const single = req.kind === 'article';
+  const magazine = req.kind === 'magazine' || single;
   const language = bookLang(req.lang).english;
   const size = BOOK_SIZES[req.size];
   const about = change
     ? `a set of changes to the software repository ${req.repo.fullName} (${change.type === 'pull' ? `pull request ${change.label}` : change.type === 'commit' ? `commit ${change.label}` : `the difference ${change.label}`})`
     : `the software repository ${req.repo.fullName}${req.repo.description ? ` (${req.repo.description})` : ''}`;
   const diagrams = req.size === 'short' ? 'one Mermaid diagram' : 'one or two Mermaid diagrams';
-  return `You write one ${magazine ? 'article of a magazine issue' : 'chapter of a book'} about ${about}. Your reader is a developer who wants to understand ${change ? 'these changes without reading the diff' : 'this code without opening it'}.
+  return `You write ${single ? 'a feature article for a technical magazine' : magazine ? 'one article of a magazine issue' : 'one chapter of a book'} about ${about}. Your reader is a developer who wants to understand ${change ? 'these changes without reading the diff' : 'this code without opening it'}.
 
 Write in ${language}. Code, identifiers, file paths and commands stay exactly as they are in the sources.
 
 Rules:
-- Format: Markdown. Do not write the title of the ${magazine ? 'article' : 'chapter'} — begin with the text itself. Use 2 to 4 subheadings ("## ").
-- Length: about ${size.words} words.
+- Format: Markdown. ${
+    single
+      ? 'The first line is a headline of your own, as a first-level heading ("# "): a few words that say what the article is about. Then the text, with 2 to 4 subheadings ("## ").'
+      : `Do not write the title of the ${magazine ? 'article' : 'chapter'} — begin with the text itself. Use 2 to 4 subheadings ("## ").`
+  }
+- Length: about ${single ? size.articleWords : size.words} words.
 - Write only what the sources below show. Where they do not show something the reader would ask about, say in one sentence that it is outside these ${change ? 'changes' : 'files'} — never guess. Name files by their path in backticks.
 - ${
     change
@@ -273,8 +280,11 @@ function readOutline(text: string, paths: string[], count: number): Outline | nu
   return { title: str(raw.title).slice(0, 140), subtitle: str(raw.subtitle).slice(0, 220), chapters: chapters.slice(0, count) };
 }
 
-/** A model's chapter with the wrapping some models add taken off. */
-function tidyChapter(text: string, title: string): string {
+/**
+ * A model's chapter with the wrapping some models add taken off. A headline the model put first is
+ * taken off too and handed to `headline`: an article is asked for one, a chapter has its title already.
+ */
+function tidyChapter(text: string, title: string, headline?: (title: string) => void): string {
   let t = text.trim();
   const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/.exec(t);
   if (fenced && !/\n```/.test(fenced[1].replace(/```[\s\S]*?```/g, ''))) t = fenced[1].trim();
@@ -286,7 +296,11 @@ function tidyChapter(text: string, title: string): string {
   });
   const first = /^#{1,3}\s+(.+)\n/.exec(t);
   const plain = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-  if (first && (plain(first[1]) === plain(title) || /^#\s/.test(first[0]))) t = t.slice(first[0].length).trim();
+  if (first && (plain(first[1]) === plain(title) || /^#\s/.test(first[0]))) {
+    // Emphasis marks and closing hashes go; underscores and a "#" inside ("index_test.ts", "PR #12") stay.
+    if (/^#\s/.test(first[0])) headline?.(first[1].replace(/[*`]/g, '').replace(/\s+#+\s*$/, '').replace(/\s+/g, ' ').trim().slice(0, 140));
+    t = t.slice(first[0].length).trim();
+  }
   return t;
 }
 
@@ -334,6 +348,8 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
   }
   // How much source text one request to the model may carry.
   const budget = provider ? Math.max(6_000, provider.readLimit * 2) : 0;
+  /** A magazine issue and a single article share a look: a lead under the headline, sidebars. */
+  const magazineLook = req.kind === 'magazine' || req.kind === 'article';
   const stopped = () => {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
   };
@@ -480,66 +496,80 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
   // ---- 2 and 3. The written kinds: a plan, then the chapters ----
   let outline: Outline | null = null;
   if (provider) {
-    const magazine = req.kind === 'magazine';
-    let count: number;
-    let paths: string[];
-    let digest: string;
-    if (tree) {
-      const ranked = [...sources].sort((a, b) => weight(b, folder) - weight(a, folder));
-      count = Math.min(size.chapters, Math.max(2, sources.length));
-      // The list of files, the most telling first, as far as the model's room allows.
-      const lines: string[] = [];
-      let used = 0;
-      for (const f of ranked) {
-        const line = `${f.path} · ${kb(f.size)}`;
-        if (used + line.length + 1 > budget * 0.4 && lines.length >= 20) break;
-        lines.push(line);
-        used += line.length + 1;
-      }
-      const listed = new Set(lines.map((l) => l.slice(0, l.lastIndexOf(' · '))));
-      const left = new Map<string, number>();
-      for (const f of sources) if (!listed.has(f.path)) left.set(dirOf(f.path) || '.', (left.get(dirOf(f.path) || '.') ?? 0) + 1);
-      const readme = ranked.find((f) => /^readme(\.|$)/i.test(nameOf(f.path)));
-      const manifest = MANIFESTS.map((m) => sources.find((f) => f.path === (folder ? `${folder}/${m}` : m))).find(Boolean);
-      const readmeText = readme ? ((await readText(readme.path)) ?? '').slice(0, Math.min(12_000, budget * 0.3)) : '';
-      const manifestText = manifest ? ((await readText(manifest.path)) ?? '').slice(0, Math.min(4_000, budget * 0.1)) : '';
-      const shares = languageShares(sources);
-      digest = [
-        `Repository: ${repo.fullName}`,
-        repo.description ? `Description: ${repo.description}` : null,
-        repo.topics.length ? `Topics: ${repo.topics.join(', ')}` : null,
-        `Reading: the branch ${ref}${folder ? `, only the folder ${folder}/` : ''}`,
-        shares ? `Languages by size: ${shares}` : null,
-        `\nFiles (${sources.length}${lines.length < sources.length ? `; the ${lines.length} most telling are listed` : ''}) — path · size:`,
-        ...lines.sort(),
-        left.size ? `Not listed: ${[...left].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([dir, n]) => `${dir}/ (${n})`).join(', ')}` : null,
-        readmeText ? `\n${readme!.path} (the start):\n"""\n${readmeText}\n"""` : null,
-        manifestText ? `\n${manifest!.path}:\n"""\n${manifestText}\n"""` : null,
-      ]
-        .filter((l): l is string => l !== null)
-        .join('\n');
-      paths = [...listed];
-    } else {
-      const c = change!;
-      const substance = c.files.filter((f) => f.patch && !SKIP_FILES.test(f.path));
-      paths = c.files.map((f) => f.path);
-      count = Math.max(2, Math.min(size.chapters, Math.ceil(substance.length / 2) + 1));
-      digest = [
-        `Repository: ${repo.fullName}${repo.description ? ` — ${repo.description}` : ''}`,
-        `Changes: ${c.label}${c.title ? ` — "${c.title}"` : ''}; ${c.base} ← ${c.head}; ${c.filesTotal} files, +${c.additions} −${c.deletions}`,
-        c.body ? `\nDescription:\n"""\n${c.body.slice(0, Math.min(6_000, budget * 0.25))}\n"""` : null,
-        `\nCommits (${c.commitsTotal}):`,
-        ...c.commits.slice(0, 60).map((x) => `- ${x.message.split('\n')[0].slice(0, 160)}`),
-        '\nChanged files — path · status · lines added/removed:',
-        ...c.files.slice(0, 400).map((f) => `${f.path} · ${f.status} · +${f.additions} −${f.deletions}`),
-      ]
-        .filter((l): l is string => l !== null)
-        .join('\n');
-    }
-
-    total = count + 4;
+    const single = req.kind === 'article';
+    const magazine = req.kind === 'magazine' || single;
     outline = draft.outline;
+    if (!outline && single) {
+      // One article needs no plan from the model: it is written from the files that tell the most about
+      // the project, or from the largest of the changes — as many as one request holds.
+      const files = tree
+        ? [...sources].sort((a, b) => weight(b, folder) - weight(a, folder)).slice(0, 8).map((f) => f.path)
+        : (change!.files.some((f) => f.patch) ? change!.files.filter((f) => f.patch && !SKIP_FILES.test(f.path)) : change!.files)
+            .slice()
+            .sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions))
+            .slice(0, 12)
+            .map((f) => f.path);
+      outline = { title: '', subtitle: plainSubtitle, chapters: [{ title: '', brief: '', files }] };
+      draft.outline = outline;
+    }
     if (!outline) {
+      let count: number;
+      let paths: string[];
+      let digest: string;
+      if (tree) {
+        const ranked = [...sources].sort((a, b) => weight(b, folder) - weight(a, folder));
+        count = Math.min(size.chapters, Math.max(2, sources.length));
+        // The list of files, the most telling first, as far as the model's room allows.
+        const lines: string[] = [];
+        let used = 0;
+        for (const f of ranked) {
+          const line = `${f.path} · ${kb(f.size)}`;
+          if (used + line.length + 1 > budget * 0.4 && lines.length >= 20) break;
+          lines.push(line);
+          used += line.length + 1;
+        }
+        const listed = new Set(lines.map((l) => l.slice(0, l.lastIndexOf(' · '))));
+        const left = new Map<string, number>();
+        for (const f of sources) if (!listed.has(f.path)) left.set(dirOf(f.path) || '.', (left.get(dirOf(f.path) || '.') ?? 0) + 1);
+        const readme = ranked.find((f) => /^readme(\.|$)/i.test(nameOf(f.path)));
+        const manifest = MANIFESTS.map((m) => sources.find((f) => f.path === (folder ? `${folder}/${m}` : m))).find(Boolean);
+        const readmeText = readme ? ((await readText(readme.path)) ?? '').slice(0, Math.min(12_000, budget * 0.3)) : '';
+        const manifestText = manifest ? ((await readText(manifest.path)) ?? '').slice(0, Math.min(4_000, budget * 0.1)) : '';
+        const shares = languageShares(sources);
+        digest = [
+          `Repository: ${repo.fullName}`,
+          repo.description ? `Description: ${repo.description}` : null,
+          repo.topics.length ? `Topics: ${repo.topics.join(', ')}` : null,
+          `Reading: the branch ${ref}${folder ? `, only the folder ${folder}/` : ''}`,
+          shares ? `Languages by size: ${shares}` : null,
+          `\nFiles (${sources.length}${lines.length < sources.length ? `; the ${lines.length} most telling are listed` : ''}) — path · size:`,
+          ...lines.sort(),
+          left.size ? `Not listed: ${[...left].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([dir, n]) => `${dir}/ (${n})`).join(', ')}` : null,
+          readmeText ? `\n${readme!.path} (the start):\n"""\n${readmeText}\n"""` : null,
+          manifestText ? `\n${manifest!.path}:\n"""\n${manifestText}\n"""` : null,
+        ]
+          .filter((l): l is string => l !== null)
+          .join('\n');
+        paths = [...listed];
+      } else {
+        const c = change!;
+        const substance = c.files.filter((f) => f.patch && !SKIP_FILES.test(f.path));
+        paths = c.files.map((f) => f.path);
+        count = Math.max(2, Math.min(size.chapters, Math.ceil(substance.length / 2) + 1));
+        digest = [
+          `Repository: ${repo.fullName}${repo.description ? ` — ${repo.description}` : ''}`,
+          `Changes: ${c.label}${c.title ? ` — "${c.title}"` : ''}; ${c.base} ← ${c.head}; ${c.filesTotal} files, +${c.additions} −${c.deletions}`,
+          c.body ? `\nDescription:\n"""\n${c.body.slice(0, Math.min(6_000, budget * 0.25))}\n"""` : null,
+          `\nCommits (${c.commitsTotal}):`,
+          ...c.commits.slice(0, 60).map((x) => `- ${x.message.split('\n')[0].slice(0, 160)}`),
+          '\nChanged files — path · status · lines added/removed:',
+          ...c.files.slice(0, 400).map((f) => `${f.path} · ${f.status} · +${f.additions} −${f.deletions}`),
+        ]
+          .filter((l): l is string => l !== null)
+          .join('\n');
+      }
+
+      total = count + 4;
       say('Модель складає план…');
       for (let attempt = 0; attempt < 2 && !outline; attempt++) {
         stopped();
@@ -572,7 +602,8 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
       if (Date.now() - lastSaid < 250) return;
       lastSaid = Date.now();
       const now = [...progress].map(([i, n]) => `${i + 1} (${n.toLocaleString('uk-UA')} зн.)`).join(', ');
-      say(`${magazine ? 'Пишу статті' : 'Пишу розділи'}: ${done - 2} з ${chapters.length} готово${now ? ` · зараз ${now}` : ''}`);
+      if (single) say(`Пишу статтю${progress.size ? `: ${(progress.get(0) ?? 0).toLocaleString('uk-UA')} зн.` : '…'}`);
+      else say(`${magazine ? 'Пишу статті' : 'Пишу розділи'}: ${done - 2} з ${chapters.length} готово${now ? ` · зараз ${now}` : ''}`);
     };
     done = 2 + draft.chapters.size;
     writing();
@@ -607,18 +638,21 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
           .filter(Boolean)
           .join('\n\n');
       }
-      const user = `The plan of the whole ${magazine ? 'issue' : 'book'} "${outline!.title}":\n${plan}\n\nWrite ${magazine ? 'article' : 'chapter'} ${i + 1}: "${chapter.title}".${chapter.brief ? `\nWhat it covers: ${chapter.brief}` : ''}\n\nSources:\n\n${material}`;
+      const user = single
+        ? `Write the article.\n\nSources:\n\n${material}`
+        : `The plan of the whole ${magazine ? 'issue' : 'book'} "${outline!.title}":\n${plan}\n\nWrite ${magazine ? 'article' : 'chapter'} ${i + 1}: "${chapter.title}".${chapter.brief ? `\nWhat it covers: ${chapter.brief}` : ''}\n\nSources:\n\n${material}`;
       progress.set(i, 0);
       let text = '';
       for (let attempt = 0; attempt < 2 && !text; attempt++) {
         try {
           const reply = await complete(provider!, { system, user, signal, onProgress: (n) => (progress.set(i, n), writing()) });
-          text = tidyChapter(reply.text, chapter.title);
+          // An article brings its own headline: it names the article and the book made of it.
+          text = tidyChapter(reply.text, chapter.title, single ? (headline) => (outline!.title = chapter.title = headline) : undefined);
         } catch (err) {
           // One more try for a dropped connection; a refusal or a stop is final.
           if (signal.aborted || err instanceof RefusedError || attempt) {
             const reason = err instanceof Error ? err.message : String(err);
-            throw signal.aborted ? err : new Error(`${magazine ? 'Стаття' : 'Розділ'} ${i + 1} («${chapter.title}»): ${reason}`);
+            throw signal.aborted ? err : new Error(single ? `Стаття: ${reason}` : `${magazine ? 'Стаття' : 'Розділ'} ${i + 1} («${chapter.title}»): ${reason}`);
           }
         }
       }
@@ -628,6 +662,8 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
       lastSaid = 0;
       writing();
     });
+    // A model that gave its article no headline: the article is named after what it is about.
+    if (single && !outline.title) outline.title = chapters[0].title = plainTitle;
   }
 
   // ---- 4. Pages ----
@@ -713,8 +749,8 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
       const page = await markdownToXhtml(draft.chapters.get(i) ?? '', fromModel, `s${i + 1}`);
       let text = page.body;
       // A magazine piece opens with its lead set apart.
-      if (req.kind === 'magazine') text = text.replace(/^<p /, '<p class="lead" ');
-      const kicker = req.kind === 'magazine' ? repo.name : `${words.chapter} ${i + 1}`;
+      if (magazineLook) text = text.replace(/^<p /, '<p class="lead" ');
+      const kicker = magazineLook ? repo.name : `${words.chapter} ${i + 1}`;
       body.push({ name, title: chapter.title, body: `<p class="kicker">${escapeXml(kicker)}</p>\n<h1>${escapeXml(chapter.title)}</h1>\n${text}` });
       bodyToc.push({ title: chapter.title, href: name, depth: 1 }, ...page.headings.map((h) => ({ title: h.title, href: `${name}#${h.id}`, depth: 2 })));
     }
@@ -796,7 +832,7 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
   }
 
   const note = provider ? words.writtenBy.replace('{model}', provider.name) : words.noAi;
-  const coverLabel = req.kind === 'magazine' ? words.magazine : req.kind === 'plain' ? words.plain : words.book;
+  const coverLabel = req.kind === 'magazine' ? words.magazine : req.kind === 'article' ? words.article : req.kind === 'plain' ? words.plain : words.book;
   // The cover is a page of its own: a book opened for the first time shows it, not the text under it.
   pages.push({ name: 'cover.xhtml', title, body: `<div class="cover"><img src="images/cover.jpg" alt="${escapeXml(title)}"/></div>` });
   pages.push({
@@ -813,20 +849,23 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
   stopped();
   say('Малюю обкладинку й збираю книжку…');
   const cover = await drawCover({
-    kind: req.kind,
+    // An article is a piece out of a magazine and looks like one, only with nothing else in the issue.
+    kind: req.kind === 'article' ? 'magazine' : req.kind,
     title,
     subtitle,
     repo: repo.fullName,
     what,
     label: coverLabel,
-    dateLine: `${words.issueOf} ${today}`,
+    dateLine: req.kind === 'article' ? today : `${words.issueOf} ${today}`,
     listTitle: words.inThisIssue,
     list:
-      req.kind === 'magazine'
-        ? outline?.chapters.map((c) => c.title)
-        : tree
-          ? [...new Set(sources.map((f) => (folder ? f.path.slice(folder.length + 1) : f.path).split('/')[0]))].slice(0, 9)
-          : change!.files.slice(0, 9).map((f) => nameOf(f.path)),
+      req.kind === 'article'
+        ? []
+        : req.kind === 'magazine'
+          ? outline?.chapters.map((c) => c.title)
+          : tree
+            ? [...new Set(sources.map((f) => (folder ? f.path.slice(folder.length + 1) : f.path).split('/')[0]))].slice(0, 9)
+            : change!.files.slice(0, 9).map((f) => nameOf(f.path)),
   });
   images.unshift({ file: 'images/cover.jpg', type: 'image/jpeg', data: cover });
 
@@ -835,7 +874,7 @@ async function make(req: BookRequest, draft: BookDraft, onProgress: (p: BookProg
     title,
     authors: [repo.fullName],
     lang: req.lang,
-    css: req.kind === 'magazine' ? BOOK_CSS + MAGAZINE_CSS : BOOK_CSS,
+    css: magazineLook ? BOOK_CSS + MAGAZINE_CSS : BOOK_CSS,
     files: pages,
     images,
     cover: 'images/cover.jpg',

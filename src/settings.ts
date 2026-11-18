@@ -137,7 +137,7 @@ export interface Settings {
   /** A GitHub token for private repositories and a higher request limit; kept on this device only. */
   githubToken: string;
   /** Books made from a repository: the choices of the last one, offered again next time. */
-  repoBookKind: 'book' | 'magazine' | 'plain';
+  repoBookKind: 'book' | 'magazine' | 'article' | 'plain';
   repoBookSize: 'short' | 'medium' | 'long';
   /** Language the book is written in (a BCP 47 tag from the list in lib/repo-book). */
   repoBookLang: string;

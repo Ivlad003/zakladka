@@ -97,7 +97,7 @@ What you should know about the app:
 - Sync uses S3-compatible storage (RustFS, MinIO): s3Endpoint, s3Bucket, s3Region, s3Prefix; the two keys are typed by the reader in the sync dialog (the cloud button in the library).
 - Web search for agents: webSearch "auto" (default: a real web search through the app's own server when the app is opened through it, otherwise Wikipedia), "wikipedia", "searxng" with searxngUrl, or "off".
 - In-browser models (aiProvider "browser"): the ones whose id starts with "cpu:" run on the processor and work on any device, an iPhone included; the others need WebGPU. They are small and cannot use tools.
-You never see keys or passwords and cannot set them: when one is needed, tell the reader which dialog and field to type it into. Do not change the provider or model you are running on in the middle of a task unless that is what the reader asked for — the change applies from their next message.`,
+You never see keys or passwords and cannot set them: when one is needed, tell the reader which dialog and field to type it into. The GitHub token for books made from private repositories (githubToken among the secrets) goes into the field "Токен GitHub" at the bottom of the AI settings; the same field is in the "Книжка з GitHub" dialog. Do not change the provider or model you are running on in the middle of a task unless that is what the reader asked for — the change applies from their next message.`,
     starters: ['Що зараз налаштовано?', 'Зроби темну тему й більший шрифт', 'Допоможи підключити Ollama чи LM Studio', 'Перевір синхронізацію'],
   },
   {

@@ -62,11 +62,13 @@ function mockBookAnswer(system: string, user: string): string | null {
     return 'Here is the plan:\n```json\n' + JSON.stringify(plan, null, 2) + '\n```';
   }
   if (system.startsWith('You repair Mermaid')) return 'flowchart TD\n  A["Вхід"] --> B["Обробка"]\n  B --> C["Вихід"]';
-  if (system.startsWith('You write one')) {
+  if (system.startsWith('You write ')) {
     const title = /Write (?:chapter|article) \d+: "(.+?)"/.exec(user)?.[1] ?? '';
     const path = /<(?:file|change) path="([^"]+)"/.exec(user)?.[1] ?? 'README.md';
     const diff = /<change path=/.test(user);
     return [
+      // An article is asked for a headline of its own on the first line.
+      ...(/headline of your own/.test(system) ? [uk ? `# Пробна стаття: ${path}` : `# A trial article: ${path}`] : []),
       uk ? `Це пробний текст розділу «${title}». Він написаний імітацією моделі, щоб перевірити, як застосунок складає книжку: абзаци, **виділення**, код у рядку на кшталт \`${path}\`, діаграми й таблиці.` : `This is a trial text of the chapter "${title}", written by the mock model to check how the app puts a book together: paragraphs, **emphasis**, inline code like \`${path}\`, diagrams and tables.`,
       uk ? '## Як це працює' : '## How it works',
       uk ? 'Запит проходить кілька кроків: спершу його приймає вхідна точка, далі дані перевіряються, і лише потім зберігаються. Стрілки → показують напрямок.' : 'A request passes several steps: the entry point takes it, the data is checked, and only then stored.',

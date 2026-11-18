@@ -44,8 +44,8 @@ export interface BookRecord {
 
 export interface BookMade {
   from: 'github';
-  /** A narrated book, a magazine issue, or the files and diffs as they are. */
-  kind: 'book' | 'magazine' | 'plain';
+  /** A narrated book, a magazine issue, a single article, or the files and diffs as they are. */
+  kind: 'book' | 'magazine' | 'article' | 'plain';
   /** "owner/name" and what of it was read: a branch, "PR #12", "main…feature", a commit. */
   repo: string;
   what: string;
