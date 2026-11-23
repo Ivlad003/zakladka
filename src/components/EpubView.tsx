@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import type { Contents, Location, Rendition } from 'epubjs';
+import { speedUpMapping } from '../engines/epub-mapping';
 import type { EpubEngineLike } from '../engines/types';
 import { attachTouch, isTap, isTouchDevice, newTapState, noteGesture, reducedMotion, wasTap, zoneOf, type TapZone, type TouchHandlers } from '../lib/gestures';
 import { debounce, isTypingTarget } from '../lib/utils';
@@ -317,6 +318,10 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       resizeOnOrientationChange: false,
     } as Parameters<typeof engine.book.renderTo>[1]);
     renditionRef.current = rendition;
+    // epub.js finds the place of a page by reading the chapter up to it; ours goes down the chapter's
+    // structure instead (see engines/epub-mapping). The part of epub.js that does it exists once the
+    // view is attached, so it is replaced when the first chapter is shown.
+    rendition.once('rendered', () => speedUpMapping(rendition));
     appliedRef.current = new Map();
     searchMarkRef.current = null;
     let lastWheel = 0;

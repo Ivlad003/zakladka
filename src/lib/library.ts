@@ -1,7 +1,7 @@
 import { duringWork } from './busy';
 import { db } from '../db';
 import { detectFormat, openEngine } from '../engines';
-import type { BookRecord } from '../types';
+import type { BookFormat, BookRecord } from '../types';
 import { sha256Hex } from './hash';
 
 /** PDF producers often leave the source file name in the Title field; a file name reads better then. */
@@ -48,14 +48,33 @@ export async function importBook(chosen: File): Promise<string> {
   const file = converted?.file ?? chosen;
   const format = await detectFormat(file);
   if (!format) throw new UnsupportedFileError(`«${chosen.name}»: підтримуються EPUB, PDF, DjVu, FB2, MOBI та JWPUB`);
+  // The id is a hash of the file, so the same book gets the same id on every device and its
+  // notes and reading position meet when the devices sync.
+  const idOfFile = async () => (await sha256Hex(converted?.original ?? (await file.arrayBuffer()))).slice(0, 32);
+
+  // A book whose whole text sits in one file (or a few huge ones) is slow to read: such files are
+  // cut into chapters before the book is kept. Places in a book are counted in its files, so the
+  // cut book is another book than the same file kept whole (by an earlier version of the app, on
+  // this device or another): it gets an id of its own, and their notes and places never mix.
+  if (format === 'epub') {
+    const cutting = await import('../engines/epub-split').catch(() => null);
+    const cut = await cutting?.splitLargeChapters(file).catch(() => null);
+    if (cutting && cut) {
+      const id = (await sha256Hex(new TextEncoder().encode(`${await idOfFile()}:${cutting.CUT_VERSION}`).buffer as ArrayBuffer)).slice(0, 32);
+      // The book as it came is still a book, should the cut one fail to open.
+      const kept = await keepBook(id, new File([cut], file.name, { type: 'application/epub+zip' }), format).catch(() => null);
+      if (kept) return kept;
+    }
+  }
 
   // Books added before ids were derived from the content are recognised by name and size.
   const legacy = await db.books.filter((b) => b.fileName === file.name && b.size === file.size && !b.cloudOnly).first();
   if (legacy) return legacy.id;
+  return keepBook(await idOfFile(), file, format);
+}
 
-  // The id is a hash of the file, so the same book gets the same id on every device and its
-  // notes and reading position meet when the devices sync.
-  const id = (await sha256Hex(converted?.original ?? (await file.arrayBuffer()))).slice(0, 32);
+/** Puts a book into the library under the id, unless it is there already. */
+async function keepBook(id: string, file: File, format: BookFormat): Promise<string> {
   const existing = await db.books.get(id);
   if (existing) {
     if (existing.cloudOnly) {
