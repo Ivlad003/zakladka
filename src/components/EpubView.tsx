@@ -96,6 +96,8 @@ interface PageManager {
 }
 
 const EASE = 'cubic-bezier(0.22, 0.8, 0.24, 1)';
+/** How long a page slides at the least when the next turn is already asked for, ms. */
+const SHORTEST_SLIDE = 80;
 const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
 export interface Typography {
@@ -328,6 +330,10 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
     let atStart = false;
     let atEnd = false;
     let turning = false;
+    /** Turns asked for while a page was turning: how many, forward (+) or back (−). */
+    let queued = 0;
+    /** Ends the slide of the turn under way at once. */
+    let hurry: (() => void) | null = null;
     let disposed = false;
     let settleToken = 0;
 
@@ -343,12 +349,31 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
         el.style.opacity = opacity;
       }
     };
-    const slide = async (px: number, ms: number, opacity = '') => {
+    /** `ofTurn`: the slide is part of a page turn, and the next turn asked for may cut it short. */
+    const slide = async (px: number, ms: number, opacity = '', ofTurn = false) => {
       const first = viewElements()[0];
       if (!first) return;
       void first.offsetWidth;
       shift(px, `transform ${ms}ms ${EASE}, opacity ${ms}ms ease`, opacity);
-      await wait(ms + 20);
+      await new Promise<void>((done) => {
+        const began = performance.now();
+        const end = () => {
+          clearTimeout(timer);
+          if (hurry === cut) hurry = null;
+          done();
+        };
+        // Cut short, a slide still lasts a moment: a held arrow key asks for thirty turns a second,
+        // and pages flying by at that rate are of no use to anyone.
+        const cut = () => {
+          clearTimeout(timer);
+          timer = setTimeout(end, Math.max(0, SHORTEST_SLIDE - (performance.now() - began)));
+        };
+        let timer = setTimeout(end, ms + 20);
+        if (!ofTurn) return;
+        hurry = cut;
+        // Another turn is waiting already.
+        if (queued) cut();
+      });
     };
     /** Whether the chapter on screen has another page on that side, already laid out next to this one. */
     const hasPage = (dir: 1 | -1) => {
@@ -361,7 +386,15 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
 
     const turn = async (dir: 1 | -1) => {
       const m = manager();
-      if (!m || turning || disposed) return;
+      if (!m || disposed) return;
+      if (turning) {
+        // A press while a page is turning counts too (it used to be lost, and quick presses turned
+        // every other page): the turn under way is cut short and this one follows it. Only a
+        // chapter still being laid out cannot be hurried; the press waits for it.
+        queued = Math.max(-3, Math.min(3, queued + dir));
+        hurry?.();
+        return;
+      }
       // A page turn is the reader's move, even right after the book has opened.
       layoutRef.current = 0;
       const jump = () => (dir > 0 ? rendition.next() : rendition.prev());
@@ -376,27 +409,32 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       try {
         const width = m.layout.delta;
         if (hasPage(dir)) {
-          await slide(-dir * width, 240);
+          await slide(-dir * width, 240, '', true);
           if (disposed) return;
           // Swap the visual shift for a real scroll within one frame, and let epub.js note the new place.
           shift(0);
           m.scrollBy(dir * width, 0, true);
           void rendition.reportLocation();
         } else if (bookEnds(dir)) {
-          await slide(0, 180);
+          await slide(0, 180, '', true);
           shift(0);
         } else {
           // The neighbouring chapter is not laid out yet: this page leaves, then the new one comes in.
-          await slide(-dir * width * 0.6, 150, '0');
+          await slide(-dir * width * 0.6, 150, '0', true);
           if (disposed) return;
           await Promise.race([jump().catch(() => {}), wait(4000)]);
           if (disposed) return;
           shift(dir * width * 0.25, '', '0');
-          await slide(0, 220, '1');
+          await slide(0, 220, '1', true);
           shift(0);
         }
       } finally {
         turning = false;
+        if (queued && !disposed) {
+          const step = queued > 0 ? 1 : -1;
+          queued -= step;
+          void turn(step);
+        }
       }
     };
     turnRef.current = (dir) => void turn(dir);
@@ -410,7 +448,7 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
         shift(hasPage(dir) || !bookEnds(dir) ? dx : dx * 0.3);
       },
       release: (dx, ms) => {
-        if (turning || disposed) return;
+        if (disposed) return;
         const far = Math.abs(dx) > host.clientWidth * 0.18;
         const fast = Math.abs(dx) > 20 && Math.abs(dx) / Math.max(ms, 1) > 0.3;
         if (far || fast) {
@@ -419,6 +457,8 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
           void turn(dx < 0 !== rtl ? 1 : -1);
           return;
         }
+        // A page that was turning did not follow the finger: there is nothing to put back.
+        if (turning) return;
         noteGesture('outcome', 'зона свайпу: закороткий рух');
         const token = ++settleToken;
         void slide(0, 180).then(() => {
@@ -500,20 +540,20 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
             settleToken++;
           },
           move: (dx, dy) => {
-            if (turning) return;
             if (!axis) {
               if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
               axis = Math.abs(dx) > Math.abs(dy) * 1.2 && !tap.current.hadSelection && !hasSelection() ? 'x' : 'y';
               if (axis === 'y' && !paged()) propsRef.current.onReadingGesture?.();
             }
-            if (axis !== 'x' || !paged() || !propsRef.current.swipe || manager()?.settings.direction === 'rtl') return;
+            // A page that is turning does not follow the finger; the swipe still counts when it ends.
+            if (turning || axis !== 'x' || !paged() || !propsRef.current.swipe || manager()?.settings.direction === 'rtl') return;
             const dir = dx < 0 ? 1 : -1;
             // At either end of the book the page resists instead of following the finger.
             shift(hasPage(dir) || !bookEnds(dir) ? dx : dx * 0.3);
           },
           end: (dx, _dy, ms, point) => {
             if (wasTap(tap.current, ms) && !hasSelection()) return fingerTap(point);
-            if (axis !== 'x' || !paged() || turning || !propsRef.current.swipe) return;
+            if (axis !== 'x' || !paged() || !propsRef.current.swipe) return;
             const far = Math.abs(dx) > host.clientWidth * 0.28;
             const fast = Math.abs(dx) > 24 && Math.abs(dx) / Math.max(ms, 1) > 0.4;
             if (far || fast) {
@@ -523,6 +563,7 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
               void turn(dx < 0 !== rtl ? 1 : -1);
               return;
             }
+            if (turning) return;
             noteGesture('outcome', 'свайп закороткий — повертаю сторінку');
             const token = ++settleToken;
             void slide(0, 180).then(() => {
