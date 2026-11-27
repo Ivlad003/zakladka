@@ -28,7 +28,12 @@ function buildInfo(): { version: string; commit: string } {
   const commits = git('rev-parse --is-shallow-repository') === 'false' ? Number(git('rev-list --count HEAD')) || 0 : 0;
   if (!commit || !commits) return { version: declared, commit };
   const [major = '0', minor = '0'] = declared.split('.');
-  return { version: `${major}.${minor}.${commits}${git('status --porcelain') ? '+' : ''}`, commit };
+  // While Vite reads this file it keeps a compiled copy beside it (vite.config.ts.timestamp-….mjs),
+  // which git reports as a new file; counting it would mark every build as changed.
+  const changed = git('status --porcelain')
+    .split('\n')
+    .some((line) => line.trim() !== '' && !/vite\.config\.\w+\.timestamp-/.test(line));
+  return { version: `${major}.${minor}.${commits}${changed ? '+' : ''}`, commit };
 }
 
 /** Dev only: the web lookups of scripts/serve.mjs (search, page text, whole pages and pictures for saved articles). */
