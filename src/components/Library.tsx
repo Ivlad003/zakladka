@@ -11,6 +11,7 @@ import { cx, formatBytes } from '../lib/utils';
 import { updateSettings, useSettings, type LibrarySort, type Theme } from '../settings';
 import type { BookRecord } from '../types';
 import { AiSettings } from './AiSettings';
+import { AppVersion } from './AppVersion';
 import { BookInfoDialog } from './BookInfoDialog';
 import { AddSheet } from './AddSheet';
 import { findUrl } from '../lib/articles';
@@ -321,6 +322,7 @@ export function Library({ onOpen, onInstall }: Props) {
             {books && shown.length === 0 && <p className="muted center">{filter.trim() ? `Нічого не знайдено за запитом «${filter}».` : 'На цій полиці ще немає книг.'}</p>}
           </>
         )}
+        <AppVersion className="library-version" />
       </main>
 
       {dragging && (

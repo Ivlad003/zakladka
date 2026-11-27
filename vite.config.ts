@@ -4,8 +4,32 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
+
+/**
+ * What this build is called, for showing to the reader. The first two numbers of the version are
+ * those of package.json; the third is the number of commits the build was made from, so it grows by
+ * itself with every change and nobody has to remember to raise it. A "+" at the end marks a build
+ * made from files that are not committed yet. Outside a git checkout (or with a shallow one, which
+ * cannot count its commits) the version of package.json is used as it stands.
+ */
+function buildInfo(): { version: string; commit: string } {
+  const declared = String(JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version ?? '0.0.0');
+  const git = (args: string) => {
+    try {
+      return execSync(`git ${args}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch {
+      return '';
+    }
+  };
+  const commit = git('rev-parse --short HEAD');
+  const commits = git('rev-parse --is-shallow-repository') === 'false' ? Number(git('rev-list --count HEAD')) || 0 : 0;
+  if (!commit || !commits) return { version: declared, commit };
+  const [major = '0', minor = '0'] = declared.split('.');
+  return { version: `${major}.${minor}.${commits}${git('status --porcelain') ? '+' : ''}`, commit };
+}
 
 /** Dev only: the web lookups of scripts/serve.mjs (search, page text, whole pages and pictures for saved articles). */
 function webLookups(): Plugin {
@@ -326,9 +350,16 @@ function mockS3(): Plugin {
   };
 }
 
+const build = buildInfo();
+
 export default defineConfig({
-  // When this build was made: shown in the settings, so a reader can tell which version a device runs.
-  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
+  // Which build this is and when it was made: shown in the library and in the settings, so a reader
+  // can tell which version a device runs (see src/lib/version.ts).
+  define: {
+    __APP_VERSION__: JSON.stringify(build.version),
+    __BUILD_COMMIT__: JSON.stringify(build.commit),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   // djvu-rs locates its .wasm through import.meta.url, which dependency pre-bundling would break.
   optimizeDeps: { exclude: ["djvu-rs"] },
   worker: { format: 'es' },

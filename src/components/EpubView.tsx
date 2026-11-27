@@ -53,6 +53,34 @@ export interface EpubViewApi {
 
 type Anchor = SelectionInfo['anchor'];
 
+/** A picture of the book, as the page shows it. */
+export interface BookPicture {
+  src: string;
+  alt: string;
+}
+
+/**
+ * The picture under a tap, with its place in the chapter's frame: an image of the page, or the image
+ * an SVG is wrapped around (covers are often made so). Null for none, and for one too small to be
+ * worth a look (a bullet, an ornament).
+ */
+function pictureAt(target: Element | null): { picture: BookPicture; box: DOMRect } | null {
+  const el = target?.closest?.('img, image') ?? target?.closest?.('svg')?.querySelector('image');
+  if (!el) return null;
+  // (The element belongs to the frame's own window, so it is told by its name, not by `instanceof`.)
+  const raw = el.localName === 'img' ? (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src : (el as SVGImageElement).href?.baseVal;
+  if (!raw) return null;
+  const box = el.getBoundingClientRect();
+  if (box.width < 24 && box.height < 24) return null;
+  let src = raw;
+  try {
+    src = new URL(raw, el.baseURI).href;
+  } catch {
+    // An address that cannot be resolved is tried as it stands.
+  }
+  return { picture: { src, alt: el.getAttribute('alt') ?? el.getAttribute('aria-label') ?? '' }, box };
+}
+
 interface Props {
   engine: EpubEngineLike;
   initialCfi: string | null;
@@ -73,6 +101,10 @@ interface Props {
   spread: boolean;
   /** A link to a footnote was followed: its text, for a popup instead of a jump. */
   onFootnote?(note: { text: string; href: string }): void;
+  /** A picture was tapped or clicked: to be shown on its own, where it can be enlarged. */
+  onImage?(picture: BookPicture): void;
+  /** Whether a finger tap at an edge of the screen turns the page; if so, it does over a picture too. */
+  tapTurns: boolean;
   annotations: Annotation[];
   activeHit: SearchHit | null;
   onRelocated(pos: EpubPosition): void;
@@ -383,6 +415,19 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
       return dir > 0 ? c.scrollLeft + c.offsetWidth + m.layout.delta <= c.scrollWidth : c.scrollLeft > 0;
     };
     const bookEnds = (dir: 1 | -1) => (dir > 0 ? atEnd : atStart);
+    /**
+     * Whether a finger tap on a picture opens it. Where a tap at an edge of the screen turns the
+     * page, it goes on doing so over a picture — a page that is one whole picture could not be left
+     * by a tap otherwise — and the picture opens from the part of it nearer the middle of the screen.
+     * One that lies wholly at an edge opens from there. `left` and `right`: the picture's sides, in
+     * the app's coordinates.
+     */
+    const opensPicture = (zone: TapZone, left: number, right: number) => {
+      if (zone === 'center' || !paged() || !propsRef.current.tapTurns) return true;
+      const box = host.getBoundingClientRect();
+      const from = zoneOf((left - box.left) / box.width);
+      return from !== 'center' && from === zoneOf((right - box.left) / box.width);
+    };
 
     const turn = async (dir: 1 | -1) => {
       const m = manager();
@@ -529,6 +574,11 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
         }
         const box = host.getBoundingClientRect();
         const zone = zoneOf((point.x - box.left) / box.width);
+        const found = propsRef.current.onImage ? pictureAt(target) : null;
+        if (found && opensPicture(zone, (origin?.left ?? 0) + found.box.left, (origin?.left ?? 0) + found.box.right)) {
+          noteGesture('outcome', 'дотик: картинка');
+          return propsRef.current.onImage?.(found.picture);
+        }
         noteGesture('outcome', `дотик: ${zone}`);
         propsRef.current.onTap?.(zone);
       };
@@ -603,15 +653,21 @@ export const EpubView = forwardRef<EpubViewApi, Props>(function EpubView(props, 
         // A finger tap has been handled already, from the touch.
         if (isTap(tap.current) || Date.now() - tapTakenRef.current < 600) return;
         if (hasSelection()) return;
-        if ((e.target as Element | null)?.closest?.('a[href]')) return;
+        const target = e.target as Element | null;
+        if (target?.closest?.('a[href]')) return;
         const frame = doc.defaultView?.frameElement;
         if (!frame) return;
         const box = host.getBoundingClientRect();
-        const zone = zoneOf((frame.getBoundingClientRect().left + e.clientX - box.left) / box.width);
+        const left = frame.getBoundingClientRect().left;
+        const zone = zoneOf((left + e.clientX - box.left) / box.width);
+        // A click on a picture opens it wherever it lands: with a mouse the sides of the screen are not
+        // the way pages are turned (there are the keys, the wheel and the buttons for that).
+        const picture = propsRef.current.onImage ? pictureAt(target)?.picture : null;
         // epub.js reports a click on a highlight during this same click; that click opens the highlight's menu instead.
         setTimeout(() => {
           if (disposed || Date.now() - markClickedRef.current < 300) return;
-          if (paged() && zone !== 'center') void turn(zone === 'left' ? -1 : 1);
+          if (picture) propsRef.current.onImage?.(picture);
+          else if (paged() && zone !== 'center') void turn(zone === 'left' ? -1 : 1);
         }, 0);
       });
 

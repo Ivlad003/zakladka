@@ -4163,6 +4163,129 @@ img {
   gap: 8px;
 }
 
+/* ---------- Which version of the app this is ---------- */
+.app-version-number {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Under the books (or under the invitation to add the first one). */
+.library-version {
+  margin: 36px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+}
+
+/* ---------- A picture from the book, opened to be looked at closely ---------- */
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  /* Like the dialogs: as tall as the part of the screen that is really visible. */
+  bottom: auto;
+  height: var(--app-height, 100%);
+  z-index: 85;
+  background: rgba(12, 13, 17, 0.95);
+  /* --veil falls as the picture is pulled down to close, and the book shows through. (The line
+     above is for a browser that cannot work the transparency out; it then stays as dark as it is.) */
+  background: rgb(12 13 17 / calc(0.95 * var(--veil, 1)));
+  outline: none;
+  -webkit-user-select: none;
+  user-select: none;
+  animation: fade-in 0.16s ease;
+}
+
+.image-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* Every finger here moves the picture: the browser must not pan, zoom or pull the page itself. */
+  touch-action: none;
+}
+
+.image-viewer[data-zoomed] .image-stage {
+  cursor: grab;
+}
+
+.image-stage img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  -webkit-user-drag: none;
+}
+
+.image-viewer-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: #d6d8dd;
+}
+
+.image-viewer-close,
+.image-viewer-zoom {
+  position: absolute;
+  color: #fff;
+  background: rgb(32 34 41 / 0.78);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.35);
+}
+
+.image-viewer-close {
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: calc(10px + env(safe-area-inset-right, 0px));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+
+.image-viewer-zoom {
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.image-viewer-zoom button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 50px;
+  height: 44px;
+  color: inherit;
+}
+
+.image-viewer-zoom .image-viewer-percent {
+  min-width: 62px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (hover: hover) {
+  .image-viewer-close:hover {
+    background: rgb(62 65 77 / 0.92);
+  }
+
+  .image-viewer-zoom button:hover:not(:disabled) {
+    background: rgb(255 255 255 / 0.14);
+  }
+}
+
+.image-viewer-close:focus-visible,
+.image-viewer-zoom button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -3px;
+}
+
 .font-picker .btn {
   position: relative;
   cursor: pointer;

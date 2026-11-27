@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import { applyUpdate, useUpdateState } from '../lib/update';
+import { appVersion } from '../lib/version';
 
 /**
  * Says that a new version is waiting (it installs itself as soon as the reader pauses) and offers
@@ -13,7 +14,7 @@ export function UpdateToast() {
   if (state === 'applied') {
     return (
       <div className="update-toast" role="status">
-        <RefreshCw size={15} /> Застосунок оновлено
+        <RefreshCw size={15} /> Застосунок оновлено до версії {appVersion}
       </div>
     );
   }

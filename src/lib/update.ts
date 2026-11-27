@@ -46,9 +46,6 @@ function check() {
   if (navigator.onLine) void registration?.update().catch(() => {});
 }
 
-/** When this build was made, for showing to the reader. */
-export const buildTime = (): Date => new Date(__BUILD_TIME__);
-
 /**
  * Asked for by the reader: looks for a newer version now and, when there is one, waits for it to
  * download. Resolves to what was found.

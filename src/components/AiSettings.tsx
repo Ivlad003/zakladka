@@ -1,4 +1,3 @@
-import { applyUpdate, buildTime, checkForUpdate } from '../lib/update';
 import { AGENTS, builtInAgent, DEFAULT_STYLE } from '../ai/agents';
 import { useEffect, useMemo, useState } from 'react';
 import { Eye, LoaderCircle, RefreshCw, Search, Wrench, X } from 'lucide-react';
@@ -6,6 +5,7 @@ import { isBlockedMixedContent, isOpenRouter, listLocalModels, listOpenRouterMod
 import { BROWSER_MODELS, canRun, deleteBrowserModel, findBrowserModel, isModelDownloaded, loadBrowserModel, useBrowserModel, webGpuAvailable } from '../ai/browser-llm';
 import { DEFAULT_BROWSER_MODEL } from '../lib/semantic';
 import { cx, timeoutSignal, uid } from '../lib/utils';
+import { AppVersion } from './AppVersion';
 import { GithubTokenField } from './GithubTokenField';
 import { voiceTypingSupported } from './MicButton';
 import {
@@ -710,36 +710,6 @@ function EmbeddingSection({ draft, set }: SectionProps) {
         )}
       </div>
     </details>
-  );
-}
-
-/** Which build this device runs, and a way to look for a newer one without waiting for the next automatic check. */
-function AppVersion() {
-  const [status, setStatus] = useState<'idle' | 'checking' | 'ready' | 'latest' | 'offline' | 'unsupported'>('idle');
-  const made = buildTime().toLocaleString('uk-UA', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
-  const check = async () => {
-    setStatus('checking');
-    const found = await checkForUpdate();
-    setStatus(found);
-    // The reader asked for it, so there is no need to wait for a pause.
-    if (found === 'ready') setTimeout(applyUpdate, 900);
-  };
-  const said = {
-    idle: '',
-    checking: 'Перевіряю…',
-    ready: 'Знайдено новішу версію — оновлюю…',
-    latest: 'Це найновіша версія.',
-    offline: 'Немає зв’язку із сервером застосунку.',
-    unsupported: 'У цьому режимі застосунок не оновлюється сам (потрібна зібрана версія, відкрита через сервер).',
-  }[status];
-  return (
-    <p className="muted small app-version">
-      Версія застосунку: {made}.{' '}
-      <button type="button" className="link" onClick={() => void check()} disabled={status === 'checking'}>
-        Перевірити оновлення
-      </button>
-      {said && <> — {said}</>}
-    </p>
   );
 }
 

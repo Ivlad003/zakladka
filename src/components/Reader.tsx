@@ -50,10 +50,11 @@ import { studyApiFor, topicForBook, type CardDraft } from '../lib/study';
 import { buildIndex, describeEmbedError, getEmbedder, searchIndex, type BuildProgress } from '../lib/semantic';
 import { downloadBookFile } from '../lib/sync';
 import { clamp, cx, isTypingTarget, truncate, uid } from '../lib/utils';
-import { getSettings, updateSettings, useSettings } from '../settings';
+import { getSettings, READING_PALETTE, updateSettings, useSettings } from '../settings';
 import type { Annotation, BookRecord, DrawState, DrawTool, HighlightColor, SearchHit, SelectionInfo, Stroke, TocItem, VectorIndex } from '../types';
 import type { AiRequest } from './AiPanel';
-import { EpubView, type EpubPosition, type EpubViewApi } from './EpubView';
+import { EpubView, type BookPicture, type EpubPosition, type EpubViewApi } from './EpubView';
+import { ImageViewer } from './ImageViewer';
 import { NoteEditor } from './NoteEditor';
 import { OcrDialog } from './OcrDialog';
 import { ReadAloudBar } from './ReadAloudBar';
@@ -166,6 +167,10 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   );
   // A footnote opened from the text.
   const [footnote, setFootnote] = useState<{ text: string; href: string } | null>(null);
+  // A picture opened from the text, to be looked at closely.
+  const [picture, setPicture] = useState<BookPicture | null>(null);
+  const pictureOpenRef = useRef(false);
+  pictureOpenRef.current = Boolean(picture);
   const readingLog = useReadingLog();
   const [bars, setBars] = useState(true);
   const [moreMenu, setMoreMenu] = useState(false);
@@ -988,6 +993,12 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
   const onKey = useCallback(
     (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
+      // An opened picture covers the book: keys that reach the book all the same (typed inside its
+      // frame) turn no pages behind the picture, and Esc closes it.
+      if (pictureOpenRef.current) {
+        if (e.key === 'Escape') setPicture(null);
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         setSide('search');
@@ -1309,6 +1320,8 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
               customFontUrl={customFontUrl}
               spread={spreadWanted}
               onFootnote={setFootnote}
+              onImage={setPicture}
+              tapTurns={settings.turnTap}
               annotations={annotations}
               activeHit={activeHit}
               onRelocated={onRelocated}
@@ -1570,6 +1583,7 @@ export function Reader({ bookId, onExit }: { bookId: string; onExit(): void }) {
           </div>
         </div>
       )}
+      {picture && <ImageViewer src={picture.src} alt={picture.alt} background={READING_PALETTE[settings.theme].bg} onClose={() => setPicture(null)} />}
       {readerNotice && !remotePosition && (
         <div className="reader-toast" role="status">
           <span>{readerNotice}</span>
